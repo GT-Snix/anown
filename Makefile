@@ -27,7 +27,11 @@ SHADER_H := $(SHADERS:shaders/%.glsl=$(BUILD)/shaders/%.glsl.h)
 EXAMPLES := $(patsubst examples/%/main.c,%,$(wildcard examples/*/main.c))
 EX_BIN   := $(EXAMPLES:%=$(BUILD)/examples/%)
 
-TESTS    := $(patsubst tests/%.c,%,$(wildcard tests/test_*.c))
+# Spikes: throwaway single-file experiments, examples/spike_*.c (+ optional _mtl.m).
+SPIKES   := $(patsubst examples/%.c,%,$(filter-out %_mtl.c,$(wildcard examples/spike_*.c)))
+EX_BIN   += $(SPIKES:%=$(BUILD)/examples/%)
+
+TESTS    :=$(patsubst tests/%.c,%,$(wildcard tests/test_*.c))
 TEST_BIN := $(TESTS:%=$(BUILD)/tests/%)
 
 .PHONY: all run test deps clean
@@ -53,6 +57,14 @@ $(LIB): $(LIB_OBJ)
 $(BUILD)/examples/%: examples/%/main.c $(LIB)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $< $(LIB) $(LDLIBS) -o $@
+
+$(BUILD)/obj/examples/%_mtl.o: examples/%_mtl.m
+	@mkdir -p $(dir $@)
+	$(CC) $(OBJCFLAGS) -Werror -c $< -o $@
+
+$(BUILD)/examples/spike_export: examples/spike_export.c $(BUILD)/obj/examples/spike_export_mtl.o $(SHADER_H) $(LIB)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $< $(BUILD)/obj/examples/spike_export_mtl.o $(LIB) $(LDLIBS) -o $@
 
 $(BUILD)/tests/%: tests/%.c $(LIB)
 	@mkdir -p $(dir $@)

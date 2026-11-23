@@ -20,3 +20,34 @@ Stubbed / not started:
 - No offscreen rendering or video export.
 
 Dependencies: sokol `09558a1` (2026-11-21), sokol-tools-bin `d4c808b` (2026-11-23).
+
+## Spike: offscreen render -> readback -> ffmpeg (2026-11-23)
+
+Example: `./build/examples/spike_export [out.mp4] [--frames N] [--no-encode]`
+
+What works:
+- Headless: `sg_setup` with our own `MTLCreateSystemDefaultDevice()`. No window
+  and no sokol_app.
+- 1920x1080 RGBA8 offscreen target, a pink quad whose position depends only on the
+  frame index, drawn with a sokol-shdc shader (`shaders/spike_quad.glsl`). This is
+  the first real use of the shader build rule.
+- Readback: sokol_gfx has no GPU->CPU API. After `sg_commit()`, the spike gets the
+  `MTLTexture` via `sg_mtl_query_image_info()` and blits it into a shared
+  `MTLBuffer` on sokol's own queue (`sg_mtl_command_queue()`), then calls
+  `waitUntilCompleted`. Ordering is safe because sokol enqueues its frame command
+  buffer when it acquires it. Rows come out top-down, matching ffmpeg's raw input.
+- ffmpeg via `popen()`: libx264, CRF 18, preset medium, yuv420p, tagged BT.709
+  limited range. Decoded pixels: background f3ede3 (target f3ede2), quad ff48b0
+  (exact).
+- Deterministic: two runs produce byte-identical mp4 files.
+
+Measured on M4, 300 frames:
+- render + readback alone: 1.1 ms/frame readback (7.4 GB/s), ~875 fps.
+- with encoding: ~208 fps end to end (3.5x realtime). libx264 is the limit, not
+  readback.
+
+Stubbed / spike-only:
+- Readback is synchronous: the CPU waits for the GPU every frame. That's fine at
+  these numbers.
+- The Metal glue lives in `examples/spike_export_mtl.m`, not in the library.
+- No audio, no error handling beyond the basics, quad shader is throwaway.
