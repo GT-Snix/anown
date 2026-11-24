@@ -1,7 +1,9 @@
 // The one translation unit that holds the sokol implementations.
 // Must be Objective-C on macOS (see sokol_app.h / sokol_gfx.h).
 #define SOKOL_IMPL
+#ifndef SOKOL_METAL
 #define SOKOL_METAL
+#endif
 // anown is a library: the user's program owns main(), and an_window_run()
 // calls sapp_run(). Without this, sokol_app defines main() and expects sokol_main().
 #define SOKOL_NO_ENTRY

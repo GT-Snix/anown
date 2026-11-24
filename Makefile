@@ -6,19 +6,24 @@
 #   make clean
 
 CC      ?= clang
+# Parallel by default: sokol_impl.m alone takes ~2.5 s, everything else overlaps it.
+MAKEFLAGS += -j$(shell sysctl -n hw.ncpu)
 BUILD   := build
 SHDC    := tools/sokol-shdc
 
 WARN     := -Wall -Wextra -Wpedantic -Werror
 CFLAGS   := -std=c11 -O1 -g $(WARN) -Iinclude -isystem vendor/sokol -I$(BUILD)/shaders \
             -DSOKOL_METAL -arch arm64 -MMD -MP
-# sokol implementation: Objective-C, vendor code, so no -Werror.
-OBJCFLAGS := -x objective-c -fobjc-arc -O1 -g -Wall -Wextra -isystem vendor/sokol \
-             -arch arm64 -MMD -MP
+# Objective-C (Metal glue). sokol_impl.m is vendor code, so it alone skips -Werror.
+OBJCFLAGS := -x objective-c -fobjc-arc -O1 -g -Wall -Wextra -Iinclude -isystem vendor/sokol \
+             -DSOKOL_METAL -arch arm64 -MMD -MP
+# Tests and spikes may use internal headers (src/*_internal.h); examples may not.
+INTERNAL := -Isrc
 LDLIBS   := -framework Metal -framework AppKit -framework QuartzCore
 
 LIB_SRC  := $(wildcard src/*.c)
-LIB_OBJ  := $(LIB_SRC:src/%.c=$(BUILD)/obj/%.o) $(BUILD)/obj/sokol_impl.o
+LIB_MSRC := $(wildcard src/*.m)
+LIB_OBJ  := $(LIB_SRC:src/%.c=$(BUILD)/obj/%.o) $(LIB_MSRC:src/%.m=$(BUILD)/obj/%.o)
 LIB      := $(BUILD)/libanown.a
 
 SHADERS  := $(wildcard shaders/*.glsl)
@@ -27,14 +32,16 @@ SHADER_H := $(SHADERS:shaders/%.glsl=$(BUILD)/shaders/%.glsl.h)
 EXAMPLES := $(patsubst examples/%/main.c,%,$(wildcard examples/*/main.c))
 EX_BIN   := $(EXAMPLES:%=$(BUILD)/examples/%)
 
-# Spikes: throwaway single-file experiments, examples/spike_*.c (+ optional _mtl.m).
-SPIKES   := $(patsubst examples/%.c,%,$(filter-out %_mtl.c,$(wildcard examples/spike_*.c)))
+# Spikes: throwaway single-file experiments, examples/spike_*.c.
+SPIKES   := $(patsubst examples/%.c,%,$(wildcard examples/spike_*.c))
 EX_BIN   += $(SPIKES:%=$(BUILD)/examples/%)
 
-TESTS    :=$(patsubst tests/%.c,%,$(wildcard tests/test_*.c))
+TESTS    := $(patsubst tests/%.c,%,$(wildcard tests/test_*.c))
 TEST_BIN := $(TESTS:%=$(BUILD)/tests/%)
 
 .PHONY: all run test deps clean
+# Keep generated shader headers; make would otherwise delete them as intermediates.
+.SECONDARY: $(SHADER_H)
 all: $(LIB) $(EX_BIN) $(TEST_BIN)
 
 # Shaders must exist before any C file that might include them.
@@ -45,6 +52,10 @@ $(BUILD)/shaders/%.glsl.h: shaders/%.glsl $(SHDC)
 $(BUILD)/obj/%.o: src/%.c $(SHADER_H)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/obj/%.o: src/%.m
+	@mkdir -p $(dir $@)
+	$(CC) $(OBJCFLAGS) -Werror -c $< -o $@
 
 $(BUILD)/obj/sokol_impl.o: src/sokol_impl.m
 	@mkdir -p $(dir $@)
@@ -58,17 +69,13 @@ $(BUILD)/examples/%: examples/%/main.c $(LIB)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $< $(LIB) $(LDLIBS) -o $@
 
-$(BUILD)/obj/examples/%_mtl.o: examples/%_mtl.m
+$(BUILD)/examples/spike_%: examples/spike_%.c $(SHADER_H) $(LIB)
 	@mkdir -p $(dir $@)
-	$(CC) $(OBJCFLAGS) -Werror -c $< -o $@
+	$(CC) $(CFLAGS) $(INTERNAL) $< $(LIB) $(LDLIBS) -o $@
 
-$(BUILD)/examples/spike_export: examples/spike_export.c $(BUILD)/obj/examples/spike_export_mtl.o $(SHADER_H) $(LIB)
+$(BUILD)/tests/%: tests/%.c $(SHADER_H) $(LIB)
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) $< $(BUILD)/obj/examples/spike_export_mtl.o $(LIB) $(LDLIBS) -o $@
-
-$(BUILD)/tests/%: tests/%.c $(LIB)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) $< $(LIB) $(LDLIBS) -o $@
+	$(CC) $(CFLAGS) $(INTERNAL) $< $(LIB) $(LDLIBS) -o $@
 
 run: $(BUILD)/examples/$(EX)
 	./$(BUILD)/examples/$(EX)

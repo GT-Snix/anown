@@ -1,4 +1,5 @@
-// Spike: solid-color axis-aligned quad, no vertex buffer.
+// Solid-color axis-aligned rect, no vertex buffer. Used by the readback test and
+// the export spike; not the real renderer.
 // The rect is given in pixels with a top-left origin.
 @vs vs
 layout(binding=0) uniform vs_params {
@@ -29,4 +30,4 @@ void main() {
 }
 @end
 
-@program spike_quad vs fs
+@program solid_rect vs fs
