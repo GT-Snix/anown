@@ -100,11 +100,18 @@ static void color_staying(an_mat2 m) {
     an_wait(S, 0.6f);
 }
 
-// fade a set of objects together and wait for it
+// fade a set of objects together and wait for it. Each object fading on its own is
+// its own layer, and a frame can hold only so many (sokol's image pool): past 20,
+// they fade in a quick ripple (0.3 s each, at most about 20 at once).
 static void fade_all(an_obj *const *objs, int n, float to, float dur) {
+    const bool ripple = n > 20;
+    const float d = ripple ? 0.3f : dur, gap = ripple ? 0.3f / 20.0f : 0.0f;
     an_handle h = { 0 };
-    for (int k = 0; k < n; k++)
-        if (objs[k]) h = an_play_async(S, an_fade_to(objs[k], to, &(an_anim_opts){ .duration = dur }));
+    for (int k = 0; k < n; k++) {
+        if (!objs[k]) continue;
+        h = an_play_async(S, an_fade_to(objs[k], to, &(an_anim_opts){ .duration = d }));
+        if (ripple) an_wait(S, gap);
+    }
     an_wait_until(h);
 }
 
