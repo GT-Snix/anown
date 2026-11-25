@@ -511,7 +511,7 @@ typedef struct an_verb_opts {
  * and an_array_swap). */
 typedef enum an_verb_kind { AN_VERB_NONE = 0, AN_VERB_SLAP, AN_VERB_POP, AN_VERB_SQUASH, AN_VERB_SWAP,
                             AN_VERB_CODE_GOTO, AN_VERB_CELL_STATE, AN_VERB_NODE_STATE, AN_VERB_EDGE_STATE,
-                            AN_VERB_PATH } an_verb_kind;
+                            AN_VERB_PATH, AN_VERB_MOVES } an_verb_kind;
 
 typedef struct an_anim {
     an_obj *obj;
@@ -528,7 +528,8 @@ typedef struct an_anim {
     bool arc;
     int swap_i, swap_j;    /* an_array_swap: the slots; an_code_goto: the line in swap_i;
                               state verbs: the state in swap_j; an_highlight_path: count in swap_i */
-    an_obj **objs;         /* an_highlight_path: the objects (a copy in the scene) */
+    an_obj **objs;         /* an_highlight_path, an_layout_animate: the objects (a copy in the scene) */
+    an_vec2 *points;       /* an_layout_animate: the targets (a copy in the scene) */
     float gap;             /* an_highlight_path: seconds between objects */
 } an_anim;
 
@@ -742,9 +743,15 @@ an_obj *an_edge(an_scene *s, const an_edge_opts *opts);
 /* A graph: a group that owns its nodes and edges (docs/api-fixes.md, item 1).
  * Inside it, edges draw under nodes: edges default to z -1, nodes to z 0
  * (siblings sort by z, then creation). Fading or moving the graph moves all of it. */
+typedef struct an_layout_opts {
+    an_vec2 spacing;       /* default {100, 100} */
+    an_vec2 origin;        /* where the root (tree) or the top middle (layered) goes */
+} an_layout_opts;
 typedef struct an_graph_opts {
     AN_OBJ_FIELDS
     bool directed;            /* every edge gets an arrowhead */
+    an_layout_opts layout;    /* the tree layout (an_graph_child, an_graph_layout_tree)
+                                 until an_graph_layout_tree is given others */
     an_color state_colors[4]; /* ACTIVE / DIMMED / DONE for nodes and edges alike (alpha 0:
                                  the defaults); [AN_STATE_BASE] is ignored: each keeps its own */
 } an_graph_opts;
@@ -758,20 +765,33 @@ an_obj *an_graph_edge(an_obj *graph, an_obj *a, an_obj *b, const an_edge_opts *o
 /* a -> b if it exists, else b -> a, else NULL. */
 an_obj *an_graph_edge_between(const an_obj *graph, const an_obj *a, const an_obj *b);
 
-/* Layouts (docs/graphs.md): pure, deterministic, at script time. They fill
- * out[n] with positions relative to the root (tree) or the top middle (layered);
- * apply them as base positions or as moves. False (and a message) on bad input.
+/* Layouts (docs/graphs.md, docs/api-fixes.md item 6): pure, deterministic, at
+ * script time. They fill out[n] with positions: the root (tree) or the top middle
+ * (layered) at opts->origin. Apply them as base positions or with
+ * an_layout_animate. False (and a message) on bad input.
  * Tree: binary if every non-root node has a side (in-order rank x spacing.x,
  * depth x spacing.y), else n-ary (leaves in pre-order, parents centered over
  * their first and last child; children in index order).
  * Layered (DAGs): edges {from, to}; an edge that would close a cycle is ignored
  * (index order); layer = longest path from a source; 8 barycenter sweeps. */
-typedef struct an_tree_node {
+typedef struct an_layout_node {
     int parent;            /* -1: the root */
     int side;              /* -1 left, +1 right; 0: n-ary (index order among siblings) */
-} an_tree_node;
-bool an_layout_tree(const an_tree_node *nodes, int n, an_vec2 spacing, an_vec2 *out);
-bool an_layout_layered(int n, const int (*edges)[2], int m, an_vec2 spacing, an_vec2 *out);
+} an_layout_node;
+bool an_layout_tree(const an_layout_node *nodes, int n, const an_layout_opts *opts, an_vec2 *out);
+bool an_layout_layered(int n, const int (*edges)[2], int m, const an_layout_opts *opts, an_vec2 *out);
+/* Glide every object from wherever it is when this starts to to[i]: one anim
+ * (continuation moves, so a glide can retarget one in flight). The arrays are
+ * copied. NULL opts: an instant set at the start (no motion). */
+an_anim an_layout_animate(an_obj *const *objs, const an_vec2 *to, int n, const an_anim_opts *opts);
+/* Trees in a graph: a node under `parent` (NULL: the root; one root per graph) on
+ * `side` (-1 left, +1 right, 0 n-ary), with the edge parent -> node. It's placed at
+ * its slot in the tree's layout with the graph's last layout opts (opts->pos is
+ * ignored). an_graph_layout_tree lays the tree out (layout opts NULL: the last
+ * ones, or the defaults) and returns an_layout_animate of its nodes (anim opts
+ * NULL: an instant set). */
+an_obj *an_graph_child(an_obj *graph, an_obj *parent, int side, const an_node_opts *opts);
+an_anim an_graph_layout_tree(an_obj *graph, const an_layout_opts *layout, const an_anim_opts *anim);
 
 /* Axes (docs/graphs.md): a group whose pos is the plot box's top-left; x axis
  * along the bottom, y axis along the left, ticks every step from the range's

@@ -281,21 +281,21 @@ static void test_graph_ownership(void) {
 // 2 slot 2, 3 slot 3; 1 = (0 + 1) / 2 = 0.5; 0 = (0.5 + 3) / 2 = 1.75. Spacing 100:
 //   0 (0, 0); 1 (-125, 100); 2 (25, 100); 3 (125, 100); 4 (-175, 200); 5 (-75, 200)
 static void test_layout_tree(void) {
-    const an_tree_node bst[7] = { { -1, 0 }, { 0, -1 }, { 0, 1 }, { 1, -1 }, { 1, 1 }, { 2, -1 }, { 2, 1 } };
+    const an_layout_node bst[7] = { { -1, 0 }, { 0, -1 }, { 0, 1 }, { 1, -1 }, { 1, 1 }, { 2, -1 }, { 2, 1 } };
     an_vec2 p[7];
-    CHECK(an_layout_tree(bst, 7, (an_vec2){ 80, 100 }, p));
+    CHECK(an_layout_tree(bst, 7, &(an_layout_opts){ .spacing = { 80, 100 } }, p));
     POS(p[0], 0, 0); POS(p[1], -160, 100); POS(p[2], 160, 100); POS(p[3], -240, 200);
     POS(p[4], -80, 200); POS(p[5], 80, 200); POS(p[6], 240, 200);
-    CHECK(an_layout_tree((an_tree_node[]){ { -1, 0 }, { 0, 1 } }, 2, (an_vec2){ 80, 100 }, p));
+    CHECK(an_layout_tree((an_layout_node[]){ { -1, 0 }, { 0, 1 } }, 2, &(an_layout_opts){ .spacing = { 80, 100 } }, p));
     POS(p[0], 0, 0); POS(p[1], 80, 100);
-    const an_tree_node nary[6] = { { -1, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 1, 0 }, { 1, 0 } };
-    CHECK(an_layout_tree(nary, 6, (an_vec2){ 100, 100 }, p));
+    const an_layout_node nary[6] = { { -1, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 1, 0 }, { 1, 0 } };
+    CHECK(an_layout_tree(nary, 6, NULL, p));
     POS(p[0], 0, 0); POS(p[1], -125, 100); POS(p[2], 25, 100); POS(p[3], 125, 100);
     POS(p[4], -175, 200); POS(p[5], -75, 200);
     // bad input: two roots; two left children; a cycle not reaching the root
-    CHECK(!an_layout_tree((an_tree_node[]){ { -1, 0 }, { -1, 0 } }, 2, (an_vec2){ 1, 1 }, p));
-    CHECK(!an_layout_tree((an_tree_node[]){ { -1, 0 }, { 0, -1 }, { 0, -1 } }, 3, (an_vec2){ 1, 1 }, p));
-    CHECK(!an_layout_tree((an_tree_node[]){ { -1, 0 }, { 2, 1 }, { 1, 1 } }, 3, (an_vec2){ 1, 1 }, p));
+    CHECK(!an_layout_tree((an_layout_node[]){ { -1, 0 }, { -1, 0 } }, 2, NULL, p));
+    CHECK(!an_layout_tree((an_layout_node[]){ { -1, 0 }, { 0, -1 }, { 0, -1 } }, 3, NULL, p));
+    CHECK(!an_layout_tree((an_layout_node[]){ { -1, 0 }, { 2, 1 }, { 1, 1 } }, 3, NULL, p));
 }
 
 // Layered: edges 0->3, 1->2, 2->4, 3->4, and 4->0 (closes a cycle: ignored).
@@ -308,8 +308,73 @@ static void test_layout_tree(void) {
 static void test_layout_layered(void) {
     const int e[5][2] = { { 0, 3 }, { 1, 2 }, { 2, 4 }, { 3, 4 }, { 4, 0 } };
     an_vec2 p[5];
-    CHECK(an_layout_layered(5, e, 5, (an_vec2){ 100, 100 }, p));
+    CHECK(an_layout_layered(5, e, 5, NULL, p));
     POS(p[0], -50, 0); POS(p[1], 50, 0); POS(p[3], -50, 100); POS(p[2], 50, 100); POS(p[4], 0, 200);
+}
+
+// Origins: the same BST and DAG with origin (960, 300): every position above shifted
+// by exactly (960, 300).
+static void test_layout_origin(void) {
+    const an_layout_node bst[7] = { { -1, 0 }, { 0, -1 }, { 0, 1 }, { 1, -1 }, { 1, 1 }, { 2, -1 }, { 2, 1 } };
+    an_vec2 p[7];
+    CHECK(an_layout_tree(bst, 7, &(an_layout_opts){ .spacing = { 80, 100 }, .origin = { 960, 300 } }, p));
+    POS(p[0], 960, 300); POS(p[1], 800, 400); POS(p[2], 1120, 400); POS(p[3], 720, 500);
+    POS(p[4], 880, 500); POS(p[5], 1040, 500); POS(p[6], 1200, 500);
+    const int e[5][2] = { { 0, 3 }, { 1, 2 }, { 2, 4 }, { 3, 4 }, { 4, 0 } };
+    CHECK(an_layout_layered(5, e, 5, &(an_layout_opts){ .origin = { 960, 300 } }, p));
+    POS(p[0], 910, 300); POS(p[1], 1010, 300); POS(p[3], 910, 400); POS(p[2], 1010, 400); POS(p[4], 960, 500);
+}
+
+// an_layout_animate: two rects from (0, 0) and (100, 0) to (200, 100) and (300, 300),
+// 1 s linear (60 fps): at 0.5 s they're at the midpoints (100, 50) and (200, 150).
+// A retarget at 0.5 s of the first to (0, 0) over 1 s continues from (100, 50): at 1 s
+// it's at (50, 25). With NULL opts the move is an instant set at the cursor.
+static void test_layout_animate(void) {
+    an_scene *s = scene();
+    an_obj *r[2] = { an_rect(s, NULL), an_rect(s, &(an_rect_opts){ .pos = { 100, 0 } }) };
+    const an_anim_opts lin = { .duration = 1, .ease = AN_EASE_LINEAR };
+    an_play_async(s, an_layout_animate(r, (an_vec2[]){ { 200, 100 }, { 300, 300 } }, 2, &lin));
+    an_wait(s, 0.5f);
+    an_vec2 p = an_obj_at_cursor(r[0]).pos;
+    POS(p, 100, 50);
+    p = an_obj_at_cursor(r[1]).pos;
+    POS(p, 200, 150);
+    an_play_async(s, an_layout_animate(r, (an_vec2[]){ { 0, 0 } }, 1, &lin));
+    an_wait(s, 0.5f);
+    p = an_obj_at_cursor(r[0]).pos;
+    POS(p, 50, 25);
+    an_play(s, an_layout_animate(r, (an_vec2[]){ { 7, 9 } }, 1, NULL));
+    p = an_obj_at_cursor(r[0]).pos;
+    POS(p, 7, 9);
+    an_scene_destroy(s);
+}
+
+// Trees in a graph: the BST 5 3 8 1 4 7 9 built with an_graph_child under layout
+// spacing (80, 100), origin (960, 300); each node is created at its slot in the tree
+// as it stands then (so 3, made when the tree is 5 and 3, sits at in-order rank 0 vs
+// the root's 1: (880, 400)); after an_graph_layout_tree (instant) every node is at the
+// pure layout's position plus the origin, as in test_layout_origin. Each child has
+// its edge from the parent. A second root, or a second left child, is refused.
+static void test_graph_tree(void) {
+    an_scene *s = scene();
+    an_obj *g = an_graph(s, &(an_graph_opts){ .layout = { .spacing = { 80, 100 }, .origin = { 960, 300 } } });
+    an_obj *n5 = an_graph_child(g, NULL, 0, NULL);
+    an_obj *n3 = an_graph_child(g, n5, -1, NULL);
+    an_vec2 p = an_obj_at_cursor(n3).pos;
+    POS(p, 880, 400);
+    an_obj *n8 = an_graph_child(g, n5, 1, NULL);
+    an_obj *n1 = an_graph_child(g, n3, -1, NULL), *n4 = an_graph_child(g, n3, 1, NULL);
+    an_obj *n7 = an_graph_child(g, n8, -1, NULL), *n9 = an_graph_child(g, n8, 1, NULL);
+    CHECK(an_graph_child(g, NULL, 0, NULL) == NULL && an_graph_child(g, n3, -1, NULL) == NULL);
+    CHECK(an_graph_edge_between(g, n5, n3) && an_graph_edge_between(g, n8, n9) && !an_graph_edge_between(g, n3, n8));
+    an_play(s, an_graph_layout_tree(g, NULL, NULL));
+    an_obj *const all[7] = { n5, n3, n8, n1, n4, n7, n9 };
+    const an_vec2 want[7] = { { 960, 300 }, { 800, 400 }, { 1120, 400 }, { 720, 500 }, { 880, 500 }, { 1040, 500 }, { 1200, 500 } };
+    for (int i = 0; i < 7; i++) {
+        p = an_obj_at_cursor(all[i]).pos;
+        POS(p, want[i].x, want[i].y);
+    }
+    an_scene_destroy(s);
 }
 
 // ---- axes and plots -------------------------------------------------------------------------------
@@ -425,6 +490,9 @@ int main(void) {
     test_graph_ownership();
     test_layout_tree();
     test_layout_layered();
+    test_layout_origin();
+    test_layout_animate();
+    test_graph_tree();
     test_axes();
 
     free(g_px);

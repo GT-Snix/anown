@@ -11,7 +11,7 @@
 // children of each node in index order, as a CSR list
 typedef struct kids { int *start, *list; } kids;
 
-static bool make_kids(const an_tree_node *t, int n, kids *k, int *root) {
+static bool make_kids(const an_layout_node *t, int n, kids *k, int *root) {
     k->start = calloc((size_t)n + 1, sizeof(int));
     k->list = malloc(sizeof(int) * (size_t)(n > 0 ? n : 1));
     if (!k->start || !k->list) return false;
@@ -33,8 +33,13 @@ static bool make_kids(const an_tree_node *t, int n, kids *k, int *root) {
     return true;
 }
 
-bool an_layout_tree(const an_tree_node *t, int n, an_vec2 spacing, an_vec2 *out) {
+static an_vec2 spacing_of(const an_layout_opts *o) {
+    return (o && o->spacing.x > 0.0f && o->spacing.y > 0.0f) ? o->spacing : (an_vec2){ 100, 100 };
+}
+
+bool an_layout_tree(const an_layout_node *t, int n, const an_layout_opts *opts, an_vec2 *out) {
     if (!t || !out || n <= 0) return false;
+    const an_vec2 spacing = spacing_of(opts), origin = opts ? opts->origin : (an_vec2){ 0, 0 };
     kids k = { 0 };
     int root;
     int *stack = malloc(sizeof(int) * (size_t)n * 2), *depth = calloc((size_t)n, sizeof(int));
@@ -101,7 +106,7 @@ bool an_layout_tree(const an_tree_node *t, int n, an_vec2 spacing, an_vec2 *out)
     if (ok) {
         const double x0 = x[root];
         for (int i = 0; i < n; i++)
-            out[i] = (an_vec2){ (float)((x[i] - x0) * (double)spacing.x), (float)depth[i] * spacing.y };
+            out[i] = (an_vec2){ origin.x + (float)((x[i] - x0) * (double)spacing.x), origin.y + (float)depth[i] * spacing.y };
     } else {
         fprintf(stderr, "anown: an_layout_tree: not a tree (one root, parents in range, one child per side)\n");
     }
@@ -133,8 +138,9 @@ static bool reaches(int n, const int (*e)[2], const bool *keep, int m, int from,
 
 enum { SWEEPS = 8 };
 
-bool an_layout_layered(int n, const int (*e)[2], int m, an_vec2 spacing, an_vec2 *out) {
+bool an_layout_layered(int n, const int (*e)[2], int m, const an_layout_opts *opts, an_vec2 *out) {
     if (n <= 0 || !out || (m > 0 && !e)) return false;
+    const an_vec2 spacing = spacing_of(opts), origin = opts ? opts->origin : (an_vec2){ 0, 0 };
     for (int j = 0; j < m; j++)
         if (e[j][0] < 0 || e[j][0] >= n || e[j][1] < 0 || e[j][1] >= n) return false;
     bool *keep = calloc((size_t)(m > 0 ? m : 1), sizeof(bool)), *mark = calloc((size_t)n, sizeof(bool));
@@ -205,7 +211,8 @@ bool an_layout_layered(int n, const int (*e)[2], int m, an_vec2 spacing, an_vec2
         for (int i = 0; i < n; i++) {
             int cnt = 0;
             for (int k = 0; k < n; k++) cnt += layer[k] == layer[i];
-            out[i] = (an_vec2){ ((float)pos[i] - (float)(cnt - 1) * 0.5f) * spacing.x, (float)layer[i] * spacing.y };
+            out[i] = (an_vec2){ origin.x + ((float)pos[i] - (float)(cnt - 1) * 0.5f) * spacing.x,
+                                origin.y + (float)layer[i] * spacing.y };
         }
     }
     free(keep);

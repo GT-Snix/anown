@@ -359,6 +359,15 @@ an_anim an_layout_animate(an_obj *const *objs, const an_vec2 *to, int n, const a
   - A node created after layout is placed by the next layout: its creation
     position is its slot in the layout computed at that moment, so the 11_bst
     pattern "pop in place while the others glide" is one call each.
+- **Added while implementing:**
+  - `an_graph_opts.layout`: the initial layout opts. Without them, the first
+    child of a graph is placed with the default opts before any
+    `an_graph_layout_tree` call can set them.
+  - `an_graph_layout_tree` stores opts even on an empty tree.
+- **Friction (open):** `an_graph_child` makes the edge drawn. 11_bst wants it
+  undrawn until after the glide, so it calls `an_obj_set_draw(edge, 0)` (found
+  with `an_graph_edge_between`). An `an_edge_opts *` on `an_graph_child` would
+  remove that.
 - **Tests:**
   - The existing layout cases with an origin of (960, 300): every position
     shifted exactly.

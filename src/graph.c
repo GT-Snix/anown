@@ -6,6 +6,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static an_color mix(an_color a, an_color b, float t) {
@@ -306,6 +307,7 @@ an_obj *an_graph(an_scene *s, const an_graph_opts *opts) {
         .z = o.z });
     if (!g) return NULL;
     g->u.graph.directed = o.directed;
+    g->u.graph.layout = o.layout;
     memcpy(g->u.graph.states, o.state_colors, sizeof g->u.graph.states);
     return g;
 }
@@ -379,4 +381,109 @@ an_obj *an_graph_edge_between(const an_obj *g, const an_obj *a, const an_obj *b)
         if (!back && e->a == b && e->b == a) back = e->edge;
     }
     return back;
+}
+
+// ---- layouts applied (docs/api-fixes.md, item 6) ------------------------------------------
+
+an_anim an_layout_animate(an_obj *const *objs, const an_vec2 *to, int n, const an_anim_opts *opts) {
+    an_anim x = { .verb = AN_VERB_MOVES, .swap_j = opts ? 0 : 1 }; // swap_j 1: an instant set
+    if (opts) x.opts = *opts;
+    if (!objs || !to || n <= 0 || !objs[0]) return x;
+    an_scene *s = objs[0]->scene;
+    x.objs = ani_arena_alloc(&s->arena, sizeof(an_obj *) * (size_t)n, alignof(an_obj *));
+    x.points = ani_arena_alloc(&s->arena, sizeof(an_vec2) * (size_t)n, alignof(an_vec2));
+    if (!x.objs || !x.points) return x;
+    memcpy(x.objs, objs, sizeof(an_obj *) * (size_t)n);
+    memcpy(x.points, to, sizeof(an_vec2) * (size_t)n);
+    x.swap_i = n;
+    x.obj = objs[0];
+    return x;
+}
+
+int64_t ani_graph_record_moves(an_scene *s, const an_anim *a, int64_t start) {
+    int64_t end = start;
+    for (int i = 0; a->objs && i < a->swap_i; i++) {
+        an_obj *o = a->objs[i];
+        if (!o) continue;
+        if (a->swap_j) { // instant
+            ani_record(s, ani_obj_prop(o, AN_PROP_POS), start, 0, AN_EASE_LINEAR,
+                       (ani_value){ { a->points[i].x, a->points[i].y } }, false, NULL);
+            continue;
+        }
+        const an_anim m = an_move_to(o, a->points[i], &a->opts);
+        const int64_t e = ani_record_anim(s, &m, start);
+        end = e > end ? e : end;
+    }
+    return end;
+}
+
+// the tree's layout with the graph's layout opts; false if it isn't a tree
+static bool tree_positions(const an_obj *g, an_vec2 *out) {
+    an_layout_node *t = malloc(sizeof(an_layout_node) * (size_t)g->u.graph.tn);
+    if (!t) return false;
+    for (int i = 0; i < g->u.graph.tn; i++) t[i] = (an_layout_node){ g->u.graph.tparent[i], g->u.graph.tside[i] };
+    const bool ok = an_layout_tree(t, g->u.graph.tn, &g->u.graph.layout, out);
+    free(t);
+    return ok;
+}
+
+an_obj *an_graph_child(an_obj *g, an_obj *parent, int side, const an_node_opts *opts) {
+    if (!g || g->kind != AN_KIND_GRAPH) return NULL;
+    int pi = -1;
+    if (parent) {
+        for (int i = 0; i < g->u.graph.tn; i++)
+            if (g->u.graph.tnodes[i] == parent) pi = i;
+        if (pi < 0) {
+            fprintf(stderr, "anown: an_graph_child: the parent isn't in this graph's tree\n");
+            return NULL;
+        }
+    } else if (g->u.graph.tn > 0) {
+        fprintf(stderr, "anown: an_graph_child: the graph already has a root\n");
+        return NULL;
+    }
+    const int n = g->u.graph.tn, cap = g->u.graph.tcap;
+    int c1 = cap, c2 = cap, c3 = cap;
+    an_obj **tn = grow(&g->scene->arena, g->u.graph.tnodes, n, &c1, sizeof(an_obj *));
+    int *tp = grow(&g->scene->arena, g->u.graph.tparent, n, &c2, sizeof(int));
+    int *ts = grow(&g->scene->arena, g->u.graph.tside, n, &c3, sizeof(int));
+    if (!tn || !tp || !ts) return NULL;
+    g->u.graph.tnodes = tn;
+    g->u.graph.tparent = tp;
+    g->u.graph.tside = ts;
+    g->u.graph.tcap = c1;
+    tp[n] = pi;
+    ts[n] = side;
+    // its slot in the layout of the tree with it
+    an_vec2 *pos = malloc(sizeof(an_vec2) * (size_t)(n + 1));
+    if (!pos) return NULL;
+    g->u.graph.tn = n + 1;
+    const bool ok = tree_positions(g, pos);
+    g->u.graph.tn = n;
+    if (!ok) { // e.g. a second child on one side
+        free(pos);
+        return NULL;
+    }
+    an_node_opts o = opts ? *opts : (an_node_opts){ 0 };
+    o.pos = pos[n];
+    free(pos);
+    an_obj *node = an_graph_node(g, &o);
+    if (!node) return NULL;
+    tn[n] = node;
+    g->u.graph.tn = n + 1;
+    if (parent && !an_graph_edge(g, parent, node, &(an_edge_opts){ .undrawn = o.undrawn })) return NULL;
+    return node;
+}
+
+an_anim an_graph_layout_tree(an_obj *g, const an_layout_opts *lo, const an_anim_opts *ao) {
+    if (!g || g->kind != AN_KIND_GRAPH) return (an_anim){ .verb = AN_VERB_MOVES };
+    if (lo) g->u.graph.layout = *lo;
+    if (g->u.graph.tn == 0) return (an_anim){ .verb = AN_VERB_MOVES };
+    an_vec2 *pos = malloc(sizeof(an_vec2) * (size_t)g->u.graph.tn);
+    if (!pos || !tree_positions(g, pos)) {
+        free(pos);
+        return (an_anim){ .verb = AN_VERB_MOVES };
+    }
+    const an_anim a = an_layout_animate(g->u.graph.tnodes, pos, g->u.graph.tn, ao);
+    free(pos);
+    return a;
 }

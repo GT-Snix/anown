@@ -70,6 +70,10 @@ edges miss; a still graph keeps hitting.
 
 ## 2. Deterministic layouts (script time)
 
+(Signatures superseded by docs/api-fixes.md item 6: `an_layout_node`,
+`an_layout_opts` with an origin, `an_layout_animate`, trees in a graph. The
+algorithms below are unchanged.)
+
 Layouts are pure functions from a structure to positions. They return
 positions, and the script applies them, as base positions (setters at
 creation) or as moves (`an_move_to` in an `an_par`), so a layout can animate.

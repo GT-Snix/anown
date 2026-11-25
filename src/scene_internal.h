@@ -125,6 +125,11 @@ struct an_obj {
             int ne, ecap;
             bool directed;
             an_color states[4];
+            // the tree built with an_graph_child: nodes in creation order, parent index, side
+            an_obj **tnodes;
+            int *tparent, *tside;
+            int tn, tcap;
+            an_layout_opts layout;
         } graph;
         // AN_KIND_AXES (docs/graphs.md)
         struct {

@@ -761,6 +761,7 @@ int64_t ani_record_anim(an_scene *s, const an_anim *a, int64_t start) {
     if (a->verb == AN_VERB_CELL_STATE && a->obj) return ani_array_record_state(s, a, start);
     if ((a->verb == AN_VERB_NODE_STATE || a->verb == AN_VERB_EDGE_STATE) && a->obj) return ani_graph_record_state(s, a, start);
     if (a->verb == AN_VERB_PATH && a->obj) return ani_graph_record_path(s, a, start);
+    if (a->verb == AN_VERB_MOVES && a->obj) return ani_graph_record_moves(s, a, start);
     if (a->verb != AN_VERB_NONE && a->obj) return record_verb(s, a, start);
     const bool spring = a->opts.ease.kind == AN_EASE_KIND_SPRING;
     int64_t duration = ani_ticks(a->opts.duration);

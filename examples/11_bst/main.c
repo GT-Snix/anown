@@ -26,16 +26,8 @@ static an_obj *node[N];         // node[i]: the i-th inserted key
 static int key[N], parent[N], side[N], depth[N];
 static int count;
 
-static const an_vec2 ROOT = { 960, 300 };
-static const an_vec2 SPACING = { 120, 105 };
-
-// where every node goes for the first `n` keys (relative layout + the root's spot)
-static void layout(int n, an_vec2 *out) {
-    an_tree_node t[N];
-    for (int i = 0; i < n; i++) t[i] = (an_tree_node){ .parent = parent[i], .side = side[i] };
-    if (!an_layout_tree(t, n, SPACING, out)) exit(1);
-    for (int i = 0; i < n; i++) out[i] = (an_vec2){ ROOT.x + out[i].x, ROOT.y + out[i].y };
-}
+// the tree's layout: root at the top middle, 120 px between in-order neighbors
+static const an_layout_opts LAYOUT = { .spacing = { 120, 105 }, .origin = { 960, 300 } };
 
 // a caption at the top: the old one fades out, the new one fades in
 static an_obj *caption;
@@ -82,20 +74,14 @@ static void insert(int k) {
     depth[me] = count > 0 ? d : 0;
     count++;
 
-    // the new layout: existing nodes glide while the new node pops in place
-    an_vec2 pos[N];
-    layout(count, pos);
+    // the new node pops in at its slot while the rest glide to the new layout
     snprintf(buf, sizeof buf, "%d", k);
-    node[me] = an_graph_node(tree, &(an_node_opts){ .pos = pos[me], .radius = 38, .label = buf });
-    an_anim glide[N + 1];
-    int ng = 0;
-    for (int i = 0; i < me; i++) glide[ng++] = an_move_to(node[i], pos[i], &(an_anim_opts){ .duration = 0.6f });
-    glide[ng++] = an_pop(node[me], NULL);
-    an_par(S, ng, glide);
-    if (par >= 0) {
-        an_obj *e = an_graph_edge(tree, node[par], node[me], &(an_edge_opts){ .undrawn = true });
-        an_play(S, an_draw(e, &(an_anim_opts){ .duration = 0.35f }));
-    }
+    node[me] = an_graph_child(tree, par >= 0 ? node[par] : NULL, sd, &(an_node_opts){ .radius = 38, .label = buf });
+    an_obj *e = par >= 0 ? an_graph_edge_between(tree, node[par], node[me]) : NULL;
+    if (e) an_obj_set_draw(e, 0); // drawn on after the glide
+    an_par(S, 2, (an_anim[]){ an_graph_layout_tree(tree, NULL, &(an_anim_opts){ .duration = 0.6f }),
+                              an_pop(node[me], NULL) });
+    if (e) an_play(S, an_draw(e, &(an_anim_opts){ .duration = 0.35f }));
 
     // back to normal
     if (np > 0) an_play(S, an_highlight_path(path, np, AN_STATE_BASE, &(an_path_opts){ .together = true, .duration = 0.25f }));
@@ -134,7 +120,7 @@ int main(int argc, char **argv) {
     }
     an_wait(S, 0.6f);
 
-    tree = an_graph(S, NULL);
+    tree = an_graph(S, &(an_graph_opts){ .layout = LAYOUT });
     float heights[N], ns[N];
     for (int i = 0; i < N; i++) {
         insert(keys[i]);
