@@ -253,14 +253,12 @@ an_obj *an_plot_data(an_obj *ax, const float *xs, const float *ys, int n, const 
     const float sw = o.stroke_width > 0 ? o.stroke_width : 4.0f;
     const float ylo = ax->u.axes.y_min, yhi = ax->u.axes.y_max;
     const float base = 0.0f < ylo ? ylo : 0.0f > yhi ? yhi : 0.0f;
-    int skipped = 0;
+    int skipped = 0, first_skip = -1;
     for (int k = 0; k < n; k++) {
         const bool xin = xs[k] >= ax->u.axes.x_min && xs[k] <= ax->u.axes.x_max;
         if (o.style == AN_PLOT_BARS) {
-            if (!xin) {
-                skipped++;
-                continue;
-            }
+            const bool out = !xin;
+            if (out && skipped++ == 0) first_skip = k;
             const float v = ys[k] < ylo ? ylo : ys[k] > yhi ? yhi : ys[k]; // clipped to the box
             const an_vec2 top = an_axes_local(ax, xs[k], v), bot = an_axes_local(ax, xs[k], base);
             const float bw = o.size > 0 ? o.size : 0.6f * ax->u.axes.size.x / (float)n;
@@ -272,11 +270,11 @@ an_obj *an_plot_data(an_obj *ax, const float *xs, const float *ys, int n, const 
                                                     .paper_under = o.paper_under });
             if (!r) return NULL;
             ani_obj_part(r, "bar", k);
+            r->never_drawn = out;
         } else {
-            if (!xin || ys[k] < ylo || ys[k] > yhi) {
-                skipped++;
-                continue;
-            }
+            // outside the range: still made (item k stays an_plot_item(plot, k)), never drawn
+            const bool out = !xin || ys[k] < ylo || ys[k] > yhi;
+            if (out && skipped++ == 0) first_skip = k;
             an_obj *pt = an_circle(s, &(an_circle_opts){ .parent = g, .pos = an_axes_local(ax, xs[k], ys[k]),
                                                          .radius = o.size > 0 ? o.size : 6.0f, .fill = fill, .stroke = ink,
                                                          .stroke_width = sw, .undrawn = o.undrawn, .pattern = o.pattern,
@@ -284,9 +282,12 @@ an_obj *an_plot_data(an_obj *ax, const float *xs, const float *ys, int n, const 
                                                          .paper_under = o.paper_under });
             if (!pt) return NULL;
             ani_obj_part(pt, "point", k);
+            pt->never_drawn = out;
         }
     }
-    if (skipped) fprintf(stderr, "anown: an_plot_data: %d point(s) outside the axes' range skipped\n", skipped);
+    if (skipped)
+        fprintf(stderr, "anown: an_plot_data: %d point(s) outside the axes' range (the first: index %d) aren't drawn\n",
+                skipped, first_skip);
     return g;
 }
 

@@ -1089,7 +1089,7 @@ static bool visit_children(ani_mesh *m, const an_scene *s, const an_obj *parent,
     // push this node's live children (with their z at the frame), sort that slice
     const int base = m->scratch_count;
     for (an_obj *c = parent->first_child; c; c = c->next_sibling) {
-        if (!ani_obj_exists(c, at)) continue; // not created yet: skip the subtree
+        if (!ani_obj_exists(c, at) || c->never_drawn) continue; // not created yet / never drawn: skip the subtree
         if (!grow((void **)&m->scratch, &m->scratch_cap, m->scratch_count + 1, sizeof(ani_draw_item)))
             return false;
         const int z = (int)ani_sample(ani_obj_prop(c, AN_PROP_Z), at).v[0];

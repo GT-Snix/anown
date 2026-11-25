@@ -321,4 +321,5 @@ plot-data bug in item 8.
 
 Not hit, but close:
 - **`an_plot_item` counts only points that were made**, so a skipped point
-  shifts the indices of the rest. All 12 heights were in range here.
+  shifts the indices of the rest. All 12 heights were in range here. (Fixed:
+  docs/api-fixes.md item 8.)

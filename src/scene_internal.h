@@ -36,6 +36,7 @@ struct an_obj {
     ani_path *path;     // outline / centerline; NULL for groups and text
     ani_brush brush;
     bool has_stroke;    // draw the outline
+    bool never_drawn;   // kept for its index, never drawn (a plot point outside the axes' range)
     bool no_fill;       // rect/circle: skip the fill
     an_toggle riso;     // fill offset override
     an_toggle shadow;   // hard shadow override

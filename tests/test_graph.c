@@ -507,8 +507,8 @@ static void test_axes(void) {
 
     // bars at x 2, 4, 6 with values 3, 7, -1 on y 0..5: the first is 300 px tall,
     // centered at y 500 - 150 = 350 and x 160; the second is clipped to 5 (500 px,
-    // center 250); the third to 0 (no height). Points: 7 and -1 are outside 0..5, so
-    // one point, (2, 3) -> (160, 200).
+    // center 250); the third to 0 (no height). Points: 7 and -1 are outside 0..5:
+    // all three are made (index k is input k), only (2, 3) -> (160, 200) is drawn.
     const float xs[3] = { 2, 4, 6 }, ys[3] = { 3, 7, -1 };
     an_obj *bars = an_plot_data(ax, xs, ys, 3, &(an_plot_opts){ .style = AN_PLOT_BARS });
     an_obj *b0 = an_plot_item(bars, 0), *b1 = an_plot_item(bars, 1), *b2 = an_plot_item(bars, 2);
@@ -517,9 +517,27 @@ static void test_axes(void) {
     CHECK(b1->u.rect.size.y == 500.0f && b1->pos.y == 250.0f);
     CHECK(b2->u.rect.size.y < 0.01f && b2->pos.y == 500.0f);
     an_obj *pts = an_plot_data(ax, xs, ys, 3, NULL);
-    CHECK(an_plot_item(pts, 0) && !an_plot_item(pts, 1));
+    CHECK(an_plot_item(pts, 2) && !an_plot_item(pts, 3));
     p = an_plot_item(pts, 0)->pos;
     POS(p, 160, 200);
+    p = an_plot_item(pts, 1)->pos; // (4, 7): unclamped, (320, -200)
+    POS(p, 320, -200);
+    CHECK(!an_plot_item(pts, 0)->never_drawn && an_plot_item(pts, 1)->never_drawn && an_plot_item(pts, 2)->never_drawn);
+    an_scene_destroy(s);
+}
+
+// Pixels for item 8: axes at (200, 100), 800 x 500, x 0..10, y 0..5; points (2, 3),
+// (4, 5.5), (6, -0.5), radius 10, fill #00C2FF. Scene positions (200 + 80x, 600 - 100y):
+// (360, 300) is drawn; (520, 50) and (680, 650) are outside the range: paper.
+static void test_plot_index_pixels(void) {
+    an_scene *s = scene();
+    an_set_chaos(s, 0.0f);
+    an_obj *ax = an_axes(s, &(an_axes_opts){ .pos = { 200, 100 }, .size = { 800, 500 }, .x_max = 10, .y_max = 5 });
+    const float xs[3] = { 2, 4, 6 }, ys[3] = { 3, 5.5f, -0.5f };
+    an_obj *pts = an_plot_data(ax, xs, ys, 3, &(an_plot_opts){ .size = 10, .fill = AN_HEX(0x00C2FF) });
+    an_play(s, an_pop(an_plot_item(pts, 1), NULL)); // harmless: it never draws
+    render(s, an_scene_length(s));
+    CHECK(is(360, 300, 0x00, 0xC2, 0xFF) && PAPER(520, 50) && PAPER(680, 650));
     an_scene_destroy(s);
 }
 
@@ -546,6 +564,7 @@ int main(void) {
     test_layout_animate();
     test_graph_tree();
     test_axes();
+    test_plot_index_pixels();
 
     free(g_px);
     ani_renderer_shutdown(&g_r);

@@ -827,10 +827,12 @@ typedef float (*an_fn)(float x, void *user);
  * A stroke: an_draw draws it on by arc length. NULL if nothing is inside. */
 an_obj *an_plot_function(an_obj *axes, an_fn f, void *user, const an_plot_opts *opts);
 /* A data plot: a group of points (circles) or bars (rects from y = 0, or the
- * nearest range end), children of the axes. Points outside the range are
- * skipped (with a message); bars are clipped to the box. */
+ * nearest range end), children of the axes. Points outside the range (and bars
+ * outside the x range) aren't drawn but keep their index (with a message); bars
+ * are clipped to the box. */
 an_obj *an_plot_data(an_obj *axes, const float *xs, const float *ys, int n, const an_plot_opts *opts);
-/* The k-th point or bar actually made (skipped ones don't count). */
+/* The k-th point or bar, always the k-th input: one outside the range is made
+ * but never drawn (animating it is harmless). */
 an_obj *an_plot_item(const an_obj *plot, int k);
 
 /* Node and edge states: the array's four (an_state). An edge's state sets
