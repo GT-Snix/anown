@@ -923,3 +923,14 @@ Test: `test_enter` in test_camera.
 `an_array_opts.state_colors` (docs/explainer.md). The quicksort script's own
 bookkeeping (`done[]`, the color variables, `paint`) is gone; frames identical
 to the golden set. Test: `test_cursor_and_states` in test_explainer.
+
+## API fixes, 5: containers reach their children; pointer options (2026-11-25)
+
+Fill, stroke, stroke width and draw progress of any container reach its
+children unless they were overridden (docs/explainer.md, "Containers");
+continuation tracks blend each child from its own value, explicit-start tracks
+apply as is. `an_callout_draw` removed (`an_draw(callout)`); `an_array_pointer`
+takes `an_pointer_opts` (label, hidden, size, color, offset). Quicksort frames
+identical to the golden set; reference PNGs identical. Test: `test_containers`
+in test_explainer (blends by hand, overrides, nesting, explicit start, pointer
+options).

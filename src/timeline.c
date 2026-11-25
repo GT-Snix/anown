@@ -250,12 +250,91 @@ static sample_kind sample_interp(const ani_channel *ch, int ncomp, ani_time at,
 // overridden: from the start of the letter's own first track, or for good once a
 // setter wrote the letter's base value. While a property follows, sampling it
 // samples the text's.
-static bool follows_text(ani_prop_ref ref, ani_prop_ref *text) {
-    if (ref.kind != ANI_TARGET_OBJ || ref.obj->kind != AN_KIND_GLYPH) return false;
-    if (ref.prop != AN_PROP_FILL && ref.prop != AN_PROP_STROKE && ref.prop != AN_PROP_STROKE_WIDTH) return false;
-    if (ref.obj->own_base & (1u << ref.prop)) return false;
-    *text = ani_obj_prop(ref.obj->u.glyph.text, ref.prop);
-    return true;
+// Container properties reach children (docs/explainer.md, "Containers"): a
+// child's fill, stroke, stroke width and draw progress follow its container's
+// unless the child was overridden (its own setter at creation: own_base; or its
+// own track from that track's start: the caller only asks when no own track has
+// started). A container passes a property on only when it provides one at `at`:
+// a setter on it, a track of its own that has started, or what it inherits
+// itself. Letters always follow their text's paint (they were created with it);
+// a text's draw progress is spread over its letters by the tessellator instead.
+static bool inherits(an_prop p) {
+    return p == AN_PROP_FILL || p == AN_PROP_STROKE || p == AN_PROP_STROKE_WIDTH || p == AN_PROP_DRAW;
+}
+
+static bool has_started_track(an_obj *o, an_prop p, ani_time at) {
+    const ani_channel *ch = o->ch[p];
+    return ch && ch->count > 0 && ani_reached(ch->tracks[0].start, at);
+}
+
+// Who does `ref` follow at `at`? Letters: their text (always, for paint).
+// Others: the nearest ancestor that provides the property itself (a setter on
+// it, or a track of its own that has started); containers in between pass it
+// through. *direct: follow that value as is (letters) rather than blending from
+// the child's own value (containers, below).
+static bool follows_text(ani_prop_ref ref, ani_prop_ref *parent, ani_time at, bool *direct) {
+    if (ref.kind != ANI_TARGET_OBJ || !inherits(ref.prop)) return false;
+    an_obj *o = ref.obj;
+    if (o->own_base & (1u << ref.prop)) return false;
+    *direct = false;
+    if (o->kind == AN_KIND_GLYPH) {
+        if (ref.prop == AN_PROP_DRAW) return false; // the text spreads its draw over its letters
+        *parent = ani_obj_prop(o->u.glyph.text, ref.prop);
+        *direct = true;
+        return true;
+    }
+    for (an_obj *c = o->parent; c && c->parent; c = c->parent) { // the root provides nothing
+        if (c->kind == AN_KIND_GLYPH) return false;
+        if ((c->own_base & (1u << ref.prop)) || has_started_track(c, ref.prop, at)) {
+            *parent = ani_obj_prop(c, ref.prop);
+            return true;
+        }
+    }
+    return false;
+}
+
+// A child following a container's property (docs/explainer.md, "Containers"):
+// - the container's value comes from its base (a setter): the child takes it;
+// - from a track with an explicit start (an_draw, verbs): the child takes the
+//   container's value as is (the deliberate start applies to it too);
+// - from a continuation track (fill_to, ...): the child goes from ITS OWN value
+//   just before the track started to the track's target, with the track's
+//   timing: child = own + f (to - own), f = the track's progress, measured on
+//   its widest component in interp space.
+static ani_value follow_sample(ani_prop_ref child, ani_prop_ref parent, ani_time at, ani_value *velocity) {
+    const ani_prop_info *pi = ani_prop_info_of(child.prop);
+    ani_value pvel;
+    const ani_value pv = ani_sample_vel(parent, at, &pvel);
+    const ani_track *w;
+    ani_value ival, ivel;
+    const sample_kind k = sample_interp(channel(parent), pi->ncomp, at, &w, &ival, &ivel);
+    if (k == AT_BASE || !w || w->explicit_from) {
+        if (velocity) *velocity = (k == AT_BASE || !w) ? (ani_value){ { 0 } } : pvel;
+        return pv;
+    }
+    // the child's own value just before the track started (one tick earlier)
+    const ani_value own = to_interp(pi, ani_sample(child, ani_tick_time(w->start - 1)));
+    int widest = 0;
+    double span = 0.0;
+    for (int c = 0; c < pi->ncomp; c++) {
+        const double d = fabs(w->to.v[c] - w->from.v[c]);
+        if (d > span) { span = d; widest = c; }
+    }
+    const ani_value piv = to_interp(pi, pv);
+    double f = 1.0, df = 0.0;
+    if (span > 1e-12) {
+        const double sw = w->to.v[widest] - w->from.v[widest];
+        f = (piv.v[widest] - w->from.v[widest]) / sw;
+        df = ivel.v[widest] / sw;
+    }
+    ani_value r = { { 0 } }, rv = { { 0 } };
+    for (int c = 0; c < pi->ncomp; c++) {
+        r.v[c] = own.v[c] + f * (w->to.v[c] - own.v[c]);
+        rv.v[c] = df * (w->to.v[c] - own.v[c]);
+    }
+    if (velocity) *velocity = rv;
+    if (k == AT_END) return w->to_natural; // exactly the target once the track has ended
+    return to_natural(child.prop, pi, r);
 }
 
 ani_value ani_sample_vel(ani_prop_ref ref, ani_time at, ani_value *velocity) {
@@ -265,7 +344,9 @@ ani_value ani_sample_vel(ani_prop_ref ref, ani_time at, ani_value *velocity) {
     const sample_kind k = sample_interp(channel(ref), pi->ncomp, at, &t, &val, &vel);
     if (velocity) *velocity = vel;
     ani_prop_ref text;
-    if (k == AT_BASE && follows_text(ref, &text)) return ani_sample_vel(text, at, velocity);
+    bool direct;
+    if (k == AT_BASE && follows_text(ref, &text, at, &direct))
+        return direct ? ani_sample_vel(text, at, velocity) : follow_sample(ref, text, at, velocity);
     switch (k) {
     case AT_BASE: return ani_base_get(ref);
     case AT_START: return t->from_natural;
@@ -319,6 +400,7 @@ static int64_t record_track(an_scene *s, ani_prop_ref ref, int64_t start, int64_
 
     if (from) {
         // explicit start (e.g. an_draw always starts at 0): a deliberate jump, at rest
+        t.explicit_from = true;
         t.from_natural = *from;
         t.from = to_interp(pi, *from);
         t.v0 = (ani_value){ { 0 } };
@@ -328,12 +410,13 @@ static int64_t record_track(an_scene *s, ani_prop_ref ref, int64_t start, int64_
         ani_value vel;
         ani_prop_ref text;
         switch (sample_interp(channel(ref), pi->ncomp, ani_tick_time(start), &w, &t.from, &vel)) {
-        case AT_BASE:
+        case AT_BASE: {
             // a letter taking over from its text starts from the text's value (and
             // momentum) at that moment, so there's no jump
-            if (follows_text(ref, &text)) {
+            bool direct;
+            if (follows_text(ref, &text, ani_tick_time(start), &direct)) {
                 ani_value tv;
-                t.from_natural = ani_sample_vel(text, ani_tick_time(start), &tv);
+                t.from_natural = ani_sample_vel(ref, ani_tick_time(start), &tv); // what it shows (inherited)
                 vel = (ani_value){ { 0 } };
                 if (ease.kind == AN_EASE_KIND_SPRING) vel = tv;
             } else {
@@ -341,6 +424,7 @@ static int64_t record_track(an_scene *s, ani_prop_ref ref, int64_t start, int64_
             }
             t.from = to_interp(pi, t.from_natural);
             break;
+        }
         case AT_START: t.from_natural = w->from_natural; break;
         case AT_END: t.from_natural = w->to_natural; break;
         case AT_RUNNING: t.from_natural = to_natural(ref.prop, pi, t.from); break;
@@ -674,7 +758,6 @@ int64_t ani_record_anim(an_scene *s, const an_anim *a, int64_t start) {
     if (a->prop == AN_PROP_CAMERA_SHAKE) return record_shake(s, start, a->opts.duration > 0.0f ? a->opts.duration : 0.5f, a->value[0]);
     if (a->verb == AN_VERB_SWAP && a->obj) return ani_array_record_swap(s, a, start);
     if (a->verb == AN_VERB_CODE_GOTO && a->obj) return ani_code_record_goto(s, a, start);
-    if (a->verb == AN_VERB_CALLOUT_DRAW && a->obj) return ani_callout_record_draw(s, a, start);
     if (a->verb == AN_VERB_CELL_STATE && a->obj) return ani_array_record_state(s, a, start);
     if (a->verb != AN_VERB_NONE && a->obj) return record_verb(s, a, start);
     const bool spring = a->opts.ease.kind == AN_EASE_KIND_SPRING;

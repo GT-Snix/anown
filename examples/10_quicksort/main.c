@@ -131,10 +131,8 @@ int main(int argc, char **argv) {
     arr = an_array(S, &(an_array_opts){ .pos = { 960, 800 }, .values = a, .count = N, .cell = { 80, 80 },
                                         .index_labels = true, .fill = pal->a,
                                         .state_colors = { [AN_CELL_DIMMED] = AN_HEX(0xD6D2C8) } }); // paper, a little darker
-    pi_ptr = an_array_pointer(arr, "i", 0);
-    pj_ptr = an_array_pointer(arr, "j", 0);
-    an_obj_set_opacity(pi_ptr, 0);
-    an_obj_set_opacity(pj_ptr, 0);
+    pi_ptr = an_array_pointer(arr, 0, &(an_pointer_opts){ .label = "i", .hidden = true });
+    pj_ptr = an_array_pointer(arr, 0, &(an_pointer_opts){ .label = "j", .hidden = true });
 
     // intro
     an_wait(S, 0.3f);
@@ -163,7 +161,7 @@ int main(int argc, char **argv) {
     an_obj *done_note = an_callout(S, &(an_callout_opts){ .text = "sorted!", .pos = { 1500, 470 }, .size = 56,
                                                            .target = { 1290, 730 }, .bend = 0.35f, .fill = pal->b,
                                                            .undrawn = true });
-    an_play(S, an_callout_draw(done_note, &(an_anim_opts){ .duration = 0.8f }));
+    an_play(S, an_draw(done_note, &(an_anim_opts){ .duration = 0.8f })); // reaches the arrow and the label
     an_wait(S, 1.5f);
 
     printf("values:");

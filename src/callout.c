@@ -81,37 +81,21 @@ an_obj *an_callout(an_scene *s, const an_callout_opts *opts) {
     return g;
 }
 
-an_anim an_callout_draw(an_obj *c, const an_anim_opts *opts) {
-    an_anim a = { .obj = c, .verb = AN_VERB_CALLOUT_DRAW };
-    if (opts) a.opts = *opts;
-    return a;
-}
-
-int64_t ani_callout_record_draw(an_scene *s, const an_anim *a, int64_t start) {
-    an_obj *c = a->obj;
-    if (c->kind != AN_KIND_CALLOUT) return start;
-    int64_t end = start;
-    if (c->u.callout.arrow) {
-        const an_anim d = an_draw(c->u.callout.arrow, &a->opts);
-        const int64_t e = ani_record_anim(s, &d, start);
-        end = e > end ? e : end;
-    }
-    const an_anim d = an_draw(c->u.callout.label, &a->opts);
-    const int64_t e = ani_record_anim(s, &d, start);
-    return e > end ? e : end;
-}
-
 // ---- array pointers ------------------------------------------------------------------------
 
-an_obj *an_array_pointer(an_obj *arr, const char *label, int slot) {
+an_obj *an_array_pointer(an_obj *arr, int slot, const an_pointer_opts *opts) {
     if (!arr || arr->kind != AN_KIND_ARRAY || slot < 0 || slot >= arr->u.array.n) return NULL;
+    const an_pointer_opts o = opts ? *opts : (an_pointer_opts){ 0 };
     const bool bars = arr->u.array.style == AN_ARRAY_BARS;
     const an_vec2 cell = arr->u.array.cell;
-    // below the row and its index labels: the arrow tip just under the labels
-    const float below = bars ? cell.x * 1.3f : cell.y * 0.5f + cell.y * 0.75f;
+    // below the row and its index labels: the arrow's tip `offset` under the row
+    const float edge = bars ? 0.0f : cell.y * 0.5f;
+    const float offset = o.offset > 0.0f ? o.offset : (bars ? cell.x * 1.3f : cell.y * 0.75f);
+    const float below = edge + offset;
     const float x = arr->u.array.slot_x[slot];
     return an_callout(arr->scene, &(an_callout_opts){
-        .parent = arr, .text = label, .size = bars ? cell.x * 0.6f : cell.y * 0.36f, .font = an_font_mono(arr->scene),
+        .parent = arr, .text = o.label, .size = o.size > 0.0f ? o.size : (bars ? cell.x * 0.6f : cell.y * 0.36f),
+        .font = an_font_mono(arr->scene), .hidden = o.hidden, .fill = o.color, .stroke = o.color,
         .pos = { x, below + (bars ? cell.x * 1.4f : cell.y * 0.95f) }, .target = { x, below }, .gap = 4,
         .stroke_width = 4 });
 }

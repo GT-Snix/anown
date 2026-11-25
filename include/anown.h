@@ -245,7 +245,10 @@ typedef enum an_anchor {
  * paper_under from these opts; the outline is drawn only if stroke or
  * stroke_width is given (as for rects). Setting or animating the text's fill,
  * stroke or stroke width changes every letter that hasn't been given its own
- * (by a setter or an anim on the letter); opacity multiplies down the tree. A text draws as one object: all its
+ * (by a setter or an anim on the letter); opacity multiplies down the tree.
+ * The same holds for any container (group, array, callout, ...): its fill,
+ * stroke, stroke width and draw progress, once set or animated, reach the
+ * children that haven't been given their own (docs/explainer.md, "Containers"). A text draws as one object: all its
  * shadows, then all fills, then all outlines.
  * an_draw(text) draws the outlines on letter by letter, each letter's fill
  * appearing when its outline closes; without an outline it reveals whole
@@ -482,7 +485,7 @@ typedef struct an_verb_opts {
 /* What an an_anim records when played: one track (NONE), or several (the verbs,
  * and an_array_swap). */
 typedef enum an_verb_kind { AN_VERB_NONE = 0, AN_VERB_SLAP, AN_VERB_POP, AN_VERB_SQUASH, AN_VERB_SWAP,
-                            AN_VERB_CODE_GOTO, AN_VERB_CALLOUT_DRAW, AN_VERB_CELL_STATE } an_verb_kind;
+                            AN_VERB_CODE_GOTO, AN_VERB_CELL_STATE } an_verb_kind;
 
 typedef struct an_anim {
     an_obj *obj;
@@ -634,14 +637,21 @@ typedef struct an_callout_opts {
     float bend;            /* curvature, -1..1, 0 straight; positive bulges up the screen */
     float gap;             /* stop short of the target; default 10 */
 } an_callout_opts;
+/* an_draw(callout) draws the arrow on and types the label (create it .undrawn):
+ * containers' draw progress reaches their children. */
 an_obj *an_callout(an_scene *s, const an_callout_opts *opts);
-/* Draw the arrow on and type the label (create the callout .undrawn first).
- * an_draw on the callout group itself doesn't reach its children. */
-an_anim an_callout_draw(an_obj *callout, const an_anim_opts *opts);
 
 /* A pointer: a callout below the array's row (under the index labels) with a
  * straight arrow pointing up at `slot`. Move it with an_array_point. */
-an_obj *an_array_pointer(an_obj *arr, const char *label, int slot);
+typedef struct an_pointer_opts {
+    const char *label;
+    bool hidden;           /* start at opacity 0 */
+    float size;            /* label em size; default 0.36 x the cell height (bars: 0.6 x width) */
+    an_color color;        /* label and arrow; alpha 0: the palette's ink */
+    float offset;          /* from the row's bottom edge (cells) or baseline (bars) to the
+                              arrow's tip; default 0.75 x the cell height (bars: 1.3 x width) */
+} an_pointer_opts;
+an_obj *an_array_pointer(an_obj *arr, int slot, const an_pointer_opts *opts);
 /* A pos track sliding the pointer to `slot` (default 0.35 s). */
 an_anim an_array_point(an_obj *pointer, int slot, const an_anim_opts *opts);
 

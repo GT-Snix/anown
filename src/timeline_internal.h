@@ -87,8 +87,6 @@ int64_t ani_array_record_swap(an_scene *s, const an_anim *a, int64_t start);
 int64_t ani_array_record_state(an_scene *s, const an_anim *a, int64_t start);
 // text.c: an_code_goto's tracks.
 int64_t ani_code_record_goto(an_scene *s, const an_anim *a, int64_t start);
-// callout.c: an_callout_draw's tracks.
-int64_t ani_callout_record_draw(an_scene *s, const an_anim *a, int64_t start);
 // An object's world transform at a time (without the camera), from the top down.
 struct ani_affine ani_obj_world_at(an_obj *o, ani_time at);
 // Seconds from a spring's start (at rest) until it first reaches its target;
@@ -107,6 +105,7 @@ typedef struct ani_track {
     // eased progress, instead of a straight line (2 components, linear space)
     bool arc;
     ani_value c1, c2;
+    bool explicit_from;      // started from a given value (an_draw, verbs), not the channel's
     // a lifted arc (array swaps): rise along the normal until the eased progress
     // reaches lift (no travel), travel as a smoothstep over [lift, 1 - lift], land.
     // Height profile 4 H u (1 - u) along the normal, H = arc height. 0: plain Bezier.

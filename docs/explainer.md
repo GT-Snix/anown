@@ -434,3 +434,37 @@ Parallel with a gap (doc item 5): demonstrated in `swap_slots`; it is awkward
     through swaps.
   - It's ordinary track data, not hidden state.
 - The quicksort script's `done[]` array and its `paint` helper are gone.
+
+### Containers (friction 4, 5)
+
+The text rule, generalized to every container (group, array, element group,
+callout, code block, text):
+
+- A child's **fill, stroke, stroke width and draw progress** follow the
+  nearest ancestor that *provides* them at that time, unless the child was
+  overridden.
+  - Provides: a setter on the ancestor, or a track of its own that has started.
+    Containers in between pass it through.
+  - Overridden: by a setter on the child itself at creation (for good), or by
+    a track of the child's own (from that track's start).
+- **How a child follows:**
+  - From a setter (the container's base): the child takes the value.
+  - From a track with an explicit start (`an_draw`, verbs): the child takes the
+    container's value as is, since the deliberate start applies to it too.
+    `an_draw(group)` draws every child on together.
+  - From a continuation track (`an_fill_to`, `an_stroke_to`,
+    `an_stroke_width_to`): each child goes from its own value just before the
+    track started to the track's target, with the track's timing:
+    child = own + f (target − own), with f the track's progress (measured on its
+    widest component, in OKLab for colors). From the track's end on, it's
+    exactly the target.
+  - Without this, a child would jump to the container's own base value (black,
+    for a group nobody colored) when the track started.
+- **Letters** keep their rule: they follow their text's paint directly (they
+  were created with it), and the text spreads its draw progress over them.
+- **Opacity** still multiplies down the tree.
+- So `an_callout_draw` is gone: `an_draw(callout)` reaches the arrow and the
+  label.
+- `an_array_pointer(arr, slot, &(an_pointer_opts){ .label, .hidden, .size,
+  .color, .offset })`. The offset is from the row's bottom edge to the arrow's
+  tip.

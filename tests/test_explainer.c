@@ -336,9 +336,9 @@ static void test_callout(void) {
     CHECK_NEAR(q.y, -4.472, 1e-3);
     p = path_pt(c2->u.callout.arrow, 0, 0);
     CHECK_NEAR(p.x, -28.4, 1e-3);
-    // drawn on: create undrawn, an_callout_draw runs the arrow's draw and the label's
+    // drawn on: create undrawn; an_draw on the callout reaches the arrow and the label
     an_obj *c3 = an_callout(s, &(an_callout_opts){ .text = "ab", .font = mono, .pos = { 300, 500 }, .target = { 500, 500 }, .undrawn = true });
-    an_play(s, an_callout_draw(c3, &(an_anim_opts){ .duration = 1, .ease = AN_EASE_LINEAR }));
+    an_play(s, an_draw(c3, &(an_anim_opts){ .duration = 1, .ease = AN_EASE_LINEAR })); // reaches the arrow and the label
     an_seek(s, 0);
     CHECK(an_obj_get(c3->u.callout.arrow).draw == 0.0f && an_obj_get(c3->u.callout.label).draw == 0.0f);
     an_seek(s, 60);
@@ -355,7 +355,7 @@ static void test_callout(void) {
 static void test_pointer(void) {
     an_scene *s = scene();
     an_obj *a = array5(s, (an_vec2){ 960, 600 }, NULL);
-    an_obj *ptr = an_array_pointer(a, "i", 2);
+    an_obj *ptr = an_array_pointer(a, 2, &(an_pointer_opts){ .label = "i" });
     CHECK(ptr && an_obj_parent(ptr) == a && ptr->pos.x == 0.0f);
     CHECK_NEAR(ptr->pos.y, 211.2, 1e-3);
     const an_vec2 p = path_pt(ptr->u.callout.arrow, 0, 0), q = path_pt(ptr->u.callout.arrow, 0, 1);
@@ -402,6 +402,65 @@ static void test_cursor_and_states(void) {
     an_scene_destroy(s);
 }
 
+// ---- containers ---------------------------------------------------------------------------
+
+// A group with children of stroke width 4 (c1) and 2 (c2), an overridden child
+// (c3: its own setter at creation), a child with its own track from 0.7 s (c4),
+// and a nested group holding c5 (width 3). The group animates its stroke width
+// to 10, linear, 0.5 s .. 1.5 s (frames 30..90).
+//   before frame 30: everyone their own value
+//   frame 60 (f = 0.5): c1 = 4 + 0.5 x 6 = 7, c2 = 2 + 0.5 x 8 = 6, c5 = 3 + 0.5 x 7 = 6.5,
+//     c3 = 4 (overridden), c4 = its own track from 0.7 s (frame 42) on: 1
+//   frame 90 and later: c1, c2, c5 exactly 10
+// Explicit start: an_draw(group) (from 0) at 2 s, linear 1 s: drawn children are at
+// 0.5 at frame 150, 1 at frame 180.
+static void test_containers(void) {
+    an_scene *s = scene();
+    an_obj *g = an_group(s, NULL), *g2 = an_group(s, &(an_group_opts){ .parent = g });
+    an_obj *c1 = an_rect(s, &(an_rect_opts){ .parent = g, .stroke_width = 4 });
+    an_obj *c2 = an_rect(s, &(an_rect_opts){ .parent = g, .stroke_width = 2 });
+    an_obj *c3 = an_rect(s, &(an_rect_opts){ .parent = g, .stroke_width = 4 });
+    an_obj *c4 = an_rect(s, &(an_rect_opts){ .parent = g, .stroke_width = 4 });
+    an_obj *c5 = an_rect(s, &(an_rect_opts){ .parent = g2, .stroke_width = 3 });
+    an_obj_set_stroke_width(c3, 4.0f); // overridden for good
+    an_wait(s, 0.5f);
+    an_play_async(s, an_stroke_width_to(g, 10, &(an_anim_opts){ .duration = 1, .ease = AN_EASE_LINEAR }));
+    an_wait(s, 0.2f);
+    an_play_async(s, an_stroke_width_to(c4, 1, &(an_anim_opts){ .duration = 0.0001f, .ease = AN_EASE_LINEAR }));
+    an_wait(s, 1.3f); // cursor 2.0
+    an_play(s, an_draw(g, &(an_anim_opts){ .duration = 1, .ease = AN_EASE_LINEAR }));
+    an_seek(s, 29);
+    CHECK(an_obj_get(c1).stroke_width == 4.0f && an_obj_get(c2).stroke_width == 2.0f && an_obj_get(c5).stroke_width == 3.0f);
+    an_seek(s, 60);
+    CHECK_NEAR(an_obj_get(c1).stroke_width, 7.0, 1e-5);
+    CHECK_NEAR(an_obj_get(c2).stroke_width, 6.0, 1e-5);
+    CHECK_NEAR(an_obj_get(c5).stroke_width, 6.5, 1e-5);
+    CHECK(an_obj_get(c3).stroke_width == 4.0f && an_obj_get(c4).stroke_width == 1.0f);
+    for (int64_t f = 90; f <= 120; f += 10) {
+        an_seek(s, f);
+        CHECK(an_obj_get(c1).stroke_width == 10.0f && an_obj_get(c2).stroke_width == 10.0f && an_obj_get(c5).stroke_width == 10.0f);
+    }
+    an_seek(s, 150);
+    CHECK_NEAR(an_obj_get(c1).draw, 0.5, 1e-6);
+    CHECK_NEAR(an_obj_get(c5).draw, 0.5, 1e-6);
+    an_seek(s, 180);
+    CHECK(an_obj_get(c1).draw == 1.0f);
+    an_scene_destroy(s);
+
+    // pointer options: hidden, offset 50 (the tip 50 px under the row's bottom edge,
+    // 48 + 50 = 98 in the array's space), color on label and arrow
+    s = scene();
+    an_obj *a = array5(s, (an_vec2){ 960, 600 }, NULL);
+    const an_color red = AN_HEX(0xFF0000);
+    an_obj *ptr = an_array_pointer(a, 1, &(an_pointer_opts){ .label = "j", .hidden = true, .offset = 50, .color = red });
+    an_seek(s, 0);
+    CHECK(an_obj_get(ptr).opacity == 0.0f);
+    const an_vec2 tip = path_pt(ptr->u.callout.arrow, 0, 1);
+    CHECK_NEAR(ptr->pos.y + tip.y, 98.0 + 4.0, 1e-3); // the arrow stops gap 4 short of its target
+    CHECK(an_obj_get(ptr->u.callout.arrow).stroke.r == 1.0f && an_obj_get(ptr->u.callout.label).fill.r == 1.0f);
+    an_scene_destroy(s);
+}
+
 int main(void) {
     if (!ani_gfx_setup_headless()) {
         fprintf(stderr, "test_explainer: headless Metal setup failed\n");
@@ -422,6 +481,7 @@ int main(void) {
     test_callout();
     test_pointer();
     test_cursor_and_states();
+    test_containers();
 
     free(g_px);
     ani_renderer_shutdown(&g_r);
