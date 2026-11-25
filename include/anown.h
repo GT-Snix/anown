@@ -15,6 +15,7 @@
 #define ANOWN_H
 
 #include <stdbool.h>
+#include <stddef.h> /* NULL: "all defaults" for any opts */
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -139,6 +140,7 @@ typedef enum an_kind {
     AN_KIND_GLYPH, /* one letter of a text (an_text_glyph) */
     AN_KIND_CODE,  /* a code block (an_code): a group of lines */
     AN_KIND_ARRAY, /* an array / bar visualizer (an_array): a group of elements */
+    AN_KIND_CALLOUT, /* a label and an arrow (an_callout, an_array_pointer): a group */
 } an_kind;
 
 typedef struct an_obj an_obj;
@@ -477,7 +479,7 @@ typedef struct an_verb_opts {
 /* What an an_anim records when played: one track (NONE), or several (the verbs,
  * and an_array_swap). */
 typedef enum an_verb_kind { AN_VERB_NONE = 0, AN_VERB_SLAP, AN_VERB_POP, AN_VERB_SQUASH, AN_VERB_SWAP,
-                            AN_VERB_CODE_GOTO } an_verb_kind;
+                            AN_VERB_CODE_GOTO, AN_VERB_CALLOUT_DRAW } an_verb_kind;
 
 typedef struct an_anim {
     an_obj *obj;
@@ -603,6 +605,31 @@ an_obj *an_code_marker(an_obj *code, const an_code_marker_opts *opts);
 an_anim an_code_goto(an_obj *code, int line, const an_anim_opts *opts);
 /* Script time: the last line an_code_goto recorded (0: none yet). */
 int an_code_current_line(const an_obj *code);
+
+/* A callout (docs/explainer.md): a text label at pos and a curved arrow from the
+ * label's edge to `target`, stopping `gap` short. A group: attach it (parent)
+ * to an object to move with it. The arrow is fixed at creation; it doesn't
+ * re-aim at a moving target. */
+typedef struct an_callout_opts {
+    AN_OBJ_FIELDS          /* pos: the label's center; fill: label color (default ink);
+                              stroke / stroke_width: the arrow (default ink, 5) */
+    const char *text;
+    float size;            /* label em size; default 34 */
+    an_font *font;         /* NULL: an_font_display */
+    an_vec2 target;        /* what the arrow points at, in the callout's parent's space */
+    float bend;            /* curvature, -1..1, 0 straight; positive bulges up the screen */
+    float gap;             /* stop short of the target; default 10 */
+} an_callout_opts;
+an_obj *an_callout(an_scene *s, const an_callout_opts *opts);
+/* Draw the arrow on and type the label (create the callout .undrawn first).
+ * an_draw on the callout group itself doesn't reach its children. */
+an_anim an_callout_draw(an_obj *callout, const an_anim_opts *opts);
+
+/* A pointer: a callout below the array's row (under the index labels) with a
+ * straight arrow pointing up at `slot`. Move it with an_array_point. */
+an_obj *an_array_pointer(an_obj *arr, const char *label, int slot);
+/* A pos track sliding the pointer to `slot` (default 0.35 s). */
+an_anim an_array_point(an_obj *pointer, int slot, const an_anim_opts *opts);
 
 /* Start at the cursor and move the cursor to the animation's end. */
 void an_play(an_scene *s, an_anim a);

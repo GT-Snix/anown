@@ -92,6 +92,10 @@ struct an_obj {
             float asc, desc, code_x, code_w, adv;
             int current;             // script time: the last line an_code_goto recorded (0: none)
         } code;
+        // AN_KIND_CALLOUT: its parts
+        struct {
+            an_obj *label, *arrow;
+        } callout;
         // AN_KIND_ARRAY (docs/explainer.md)
         struct {
             int n;

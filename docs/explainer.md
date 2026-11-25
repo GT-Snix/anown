@@ -249,9 +249,12 @@ an_obj *an_callout(an_scene *s, const an_callout_opts *opts);
   - The arrow starts at the label's box edge facing the target and ends `gap`
     short of the target.
   - The label's alignment follows the side the target is on.
-- **Drawing it on:** `an_draw(callout)` draws the arrow on and types the
-  label. Two tracks (the arrow's draw and the label's draw) recorded by one
-  anim.
+- **Drawing it on:** `an_callout_draw(callout, opts)` draws the arrow on and
+  types the label. Two tracks (the arrow's draw and the label's draw) recorded
+  by one anim. *(As built: `an_draw` on the callout group itself doesn't reach
+  its children, so this is a separate function; see the friction list.)*
+- **The arrow head** is two strokes back from the tip (±28°, 16 px), not a
+  filled triangle.
 - **Pointers** (quicksort's `i`, `j`, `pivot`) are callouts attached to the
   array, below the row (below the index labels), pointing up at a slot:
   `an_array_pointer(arr, "i", slot)` returns a callout.

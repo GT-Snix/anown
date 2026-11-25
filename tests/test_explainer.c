@@ -305,6 +305,69 @@ static void test_code_marker(void) {
     an_scene_destroy(s);
 }
 
+// ---- callouts and pointers ------------------------------------------------------------------
+
+static an_vec2 path_pt(const an_obj *stroke, int sub, int last) {
+    const ani_subpath *sp = &stroke->path->subs[sub];
+    return stroke->path->pts[sp->first + (last ? sp->count - 1 : 0)];
+}
+
+// Label "ab" in the mono at 34 px at (300, 300): 2 x 600 x 0.034 = 40.8 wide, so
+// the arrow leaves the box at half the width + 8 = 28.4 (the group's origin is the
+// label's center). Target (500, 300), i.e. (200, 0) locally, gap 10:
+//   bend 0: from (28.4, 0) to (190, 0)
+//   bend 0.5: chord 28.4 -> 200 (171.6 long, middle 114.2); control pushed up by
+//     0.5 x 171.6 / 2 = 42.9: (114.2, -42.9). End tangent (85.8, 42.9) / 95.927 =
+//     (0.89443, 0.44721); end = (200, 0) - 10 x that = (191.056, -4.472)
+//   target to the left, (100, 300): the arrow leaves the label's left side, (-28.4, 0)
+static void test_callout(void) {
+    an_scene *s = scene();
+    an_font *mono = an_font_mono(s);
+    an_obj *c0 = an_callout(s, &(an_callout_opts){ .text = "ab", .font = mono, .pos = { 300, 300 }, .target = { 500, 300 } });
+    an_obj *c1 = an_callout(s, &(an_callout_opts){ .text = "ab", .font = mono, .pos = { 300, 300 }, .target = { 500, 300 }, .bend = 0.5f });
+    an_obj *c2 = an_callout(s, &(an_callout_opts){ .text = "ab", .font = mono, .pos = { 300, 300 }, .target = { 100, 300 } });
+    an_vec2 p = path_pt(c0->u.callout.arrow, 0, 0), q = path_pt(c0->u.callout.arrow, 0, 1);
+    CHECK_NEAR(p.x, 28.4, 1e-3);
+    CHECK_NEAR(p.y, 0, 1e-4);
+    CHECK_NEAR(q.x, 190, 1e-3);
+    CHECK_NEAR(q.y, 0, 1e-4);
+    q = path_pt(c1->u.callout.arrow, 0, 1);
+    CHECK_NEAR(q.x, 191.056, 1e-3);
+    CHECK_NEAR(q.y, -4.472, 1e-3);
+    p = path_pt(c2->u.callout.arrow, 0, 0);
+    CHECK_NEAR(p.x, -28.4, 1e-3);
+    // drawn on: create undrawn, an_callout_draw runs the arrow's draw and the label's
+    an_obj *c3 = an_callout(s, &(an_callout_opts){ .text = "ab", .font = mono, .pos = { 300, 500 }, .target = { 500, 500 }, .undrawn = true });
+    an_play(s, an_callout_draw(c3, &(an_anim_opts){ .duration = 1, .ease = AN_EASE_LINEAR }));
+    an_seek(s, 0);
+    CHECK(an_obj_get(c3->u.callout.arrow).draw == 0.0f && an_obj_get(c3->u.callout.label).draw == 0.0f);
+    an_seek(s, 60);
+    CHECK(an_obj_get(c3->u.callout.arrow).draw == 1.0f && an_obj_get(c3->u.callout.label).draw == 1.0f);
+    an_scene_destroy(s);
+}
+
+// A pointer on array5 (cells 96): the tip's target is 0.5 x 96 + 0.75 x 96 = 120
+// below the row, the label 0.95 x 96 = 91.2 below that (array space y 211.2). Label
+// size 0.36 x 96 = 34.56: half its line box (1020 + 300) x 0.03456 / 2 = 22.81, + 8
+// = 30.81 from the label's center. So locally the arrow runs from (0, -30.81) to
+// (0, -91.2 + 4) = (0, -87.2) (gap 4). an_array_point to slot 4: the pointer ends
+// exactly at x 192, y unchanged.
+static void test_pointer(void) {
+    an_scene *s = scene();
+    an_obj *a = array5(s, (an_vec2){ 960, 600 }, NULL);
+    an_obj *ptr = an_array_pointer(a, "i", 2);
+    CHECK(ptr && an_obj_parent(ptr) == a && ptr->pos.x == 0.0f);
+    CHECK_NEAR(ptr->pos.y, 211.2, 1e-3);
+    const an_vec2 p = path_pt(ptr->u.callout.arrow, 0, 0), q = path_pt(ptr->u.callout.arrow, 0, 1);
+    CHECK_NEAR(p.y, -30.81, 0.01);
+    CHECK_NEAR(q.y, -87.2, 1e-3);
+    CHECK(p.x == 0.0f && q.x == 0.0f);
+    an_play(s, an_array_point(ptr, 4, NULL));
+    const an_vec2 e = pos_at(ptr, s, an_scene_length(s));
+    CHECK(e.x == 192.0f && e.y == ptr->pos.y);
+    an_scene_destroy(s);
+}
+
 int main(void) {
     if (!ani_gfx_setup_headless()) {
         fprintf(stderr, "test_explainer: headless Metal setup failed\n");
@@ -322,6 +385,8 @@ int main(void) {
     test_fade_one_layer();
     test_paper_under_default();
     test_code_marker();
+    test_callout();
+    test_pointer();
 
     free(g_px);
     ani_renderer_shutdown(&g_r);

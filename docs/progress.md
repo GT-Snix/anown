@@ -854,3 +854,16 @@ script-time. Test (test_explainer): hidden before the first goto; mid-fade at
 line 3 by hand (alpha 0.5935); at line 5 the bar's rows are exactly the line
 box (221..259, row 220 half, 260 paper), and line 3 is clear again.
 The ▶ triangle became an arrow: no filled arbitrary polygons (friction list).
+
+## Explainer objects, 3: callouts and pointers (2026-11-25)
+
+`an_callout` (AN_KIND_CALLOUT: a label and a curved arrow from the label's box
+edge to a target, `gap` short, bend along the up-screen normal; head as two
+strokes) and `an_callout_draw` (arrow draw + typed label as one anim).
+`an_array_pointer(arr, label, slot)` (a callout below the index labels, arrow
+up at the slot) and `an_array_point(ptr, slot, opts)` (a pos track). No
+re-aiming; 9B's edges are noted in the doc. `anown.h` now includes
+<stddef.h> (NULL for "all defaults" didn't compile without another include).
+Tests (test_explainer): arrow start at the label's edge and end gap short,
+straight and bent (by hand), left-side targets; drawing on; the pointer's
+geometry and an exact slide. 19 test programs pass; reference PNGs identical.

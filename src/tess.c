@@ -1145,7 +1145,8 @@ static bool visit_children(ani_mesh *m, const an_scene *s, const an_obj *parent,
         }
         if (!flush_glyphs(m, s, gbase, target)) return false;
         emit_style st = { 0 };
-        const bool drawable = c->kind != AN_KIND_GROUP && c->kind != AN_KIND_TEXT && c->kind != AN_KIND_CODE;
+        const bool drawable = c->kind != AN_KIND_GROUP && c->kind != AN_KIND_TEXT && c->kind != AN_KIND_CODE &&
+                              c->kind != AN_KIND_ARRAY && c->kind != AN_KIND_CALLOUT;
         if (drawable) st = sample_style(s, c, chaos, at);
         // Isolate when the node fades as a unit, or (outside any layer) when a
         // translucent paint needs stencil coverage. docs/layers.md
