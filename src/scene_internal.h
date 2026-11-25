@@ -4,22 +4,45 @@
 
 #include "anown.h"
 #include "arena_internal.h"
+#include "path_internal.h"
+
+typedef struct ani_channel ani_channel; // timeline_internal.h
 
 struct an_obj {
     an_kind kind;
     uint32_t id; // creation order within the scene, 1-based; root is 0
     an_scene *scene;
+    const char *name;   // NULL if unnamed; unique in the scene
+    an_obj *next_named; // list of named objects, for duplicate checks
+    an_rng rng;         // keyed by name hash if named, else by id
+    uint64_t rng_key;   // that key (also keys the line boil noise)
+    int64_t birth;      // cursor (ticks) when created; not drawn before
 
-    // transform, relative to parent
+    // BASE state (what the script set at creation). Never changed by sampling;
+    // the timeline layers tracks over it. See docs/timeline.md.
     an_vec2 pos;
     an_vec2 scale;
     float rotation;
+    float opacity;
     int z;
-
-    // style (only fill, and stroke for lines, are drawn so far)
     an_color fill;
     an_color stroke;
     float stroke_width;
+    float draw;         // draw progress 0..1
+    float chaos;        // chaos multiplier, default 1
+
+    // geometry and stroke style (fixed at creation)
+    ani_path *path;     // outline / centerline; NULL for groups and text
+    ani_brush brush;
+    bool has_stroke;    // draw the outline
+    bool no_fill;       // rect/circle: skip the fill
+    an_toggle riso;     // fill offset override
+    an_toggle shadow;   // hard shadow override
+    an_pattern pattern; // fill pattern (defaults applied)
+    bool paper_under;   // fill the silhouette with the background color first
+
+    // tracks per animatable property; NULL until the first track
+    ani_channel *ch[AN_PROP_COUNT];
 
     // tree: doubly linked sibling list under parent
     an_obj *parent; // never NULL except for the scene root
@@ -29,7 +52,7 @@ struct an_obj {
     union {
         struct { an_vec2 size; } rect;
         struct { float radius; } circle;
-        struct { an_vec2 from, to; } line;
+        struct { an_vec2 from, to; } line; // also arrows
         struct { const char *str; float size; } text;
     } u;
 };
@@ -38,9 +61,20 @@ struct an_scene {
     int width, height, fps;
     uint64_t seed;
     an_color background;
+    an_rng rng;      // the scene's own stream (key ANI_RNG_SCENE_KEY)
+    float chaos;     // BASE chaos dial (scene target), default 1
+    an_style style;  // resolved: defaults applied (docs/layers.md)
+    ani_channel *ch[AN_PROP_COUNT]; // scene-target tracks (only AN_PROP_CHAOS so far)
     ani_arena arena;
     an_obj root;     // hidden group; top-level objects are its children
     uint32_t count;  // objects created, not counting root
+    an_obj *named;   // head of the named-object list
+
+    // timeline (docs/timeline.md)
+    int64_t cursor;  // ticks (microseconds)
+    int64_t end;     // latest track end, ticks
+    uint32_t seq;    // track recording counter
+    int64_t frame;   // frame reported by an_obj_get (an_seek)
 };
 
 #endif

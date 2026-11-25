@@ -39,6 +39,11 @@ Out of scope for v1: LaTeX, 3D, audio, a GUI editor, and scripting-language bind
    no global RNG state. The same input must produce byte-identical frames.
    Avoid anything order-dependent that isn't specified, such as hash iteration order
    or pointer comparisons.
+   Random numbers from streams (`an_rng_*`) are drawn only while the script
+   builds the scene. Anything random computed while rendering must come from
+   `an_hash(seed, stream, counter)`, which is stateless. The preview may use the
+   wall clock to choose WHICH frame to show; what a frame looks like never
+   depends on it.
 2. **Memory.** Each scene owns an arena allocator. Every object is allocated from it
    and freed all at once when the scene is destroyed. Users never free individual
    objects, and the public API has no per-object `free`/`destroy`.
@@ -64,16 +69,54 @@ Out of scope for v1: LaTeX, 3D, audio, a GUI editor, and scripting-language bind
 7. **One draw path.** Preview and export both draw through `ani_renderer_draw()`
    (`src/render.c`), fed by the CPU tessellator (`src/tess.c`). Never add
    output-specific drawing. Only the pass, its formats and the sample count differ
-   (the preview swapchain has a depth buffer, offscreen targets don't).
+   (both have a depth-stencil buffer: the shadow cut needs stencil on the main
+   target; offscreen targets get it from `ani_offscreen_make_ds`).
 8. **Coordinates.** Scene pixels at the scene's own width/height: origin top-left,
    y down, rotation in radians, clockwise. Draw order is depth-first, siblings sorted
    by `(z, creation id)`.
+
+9. **Timeline.** docs/timeline.md is the spec. Objects keep a BASE state; the
+   state at frame N is always base + tracks sampled at N, computed fresh. Never
+   write sampled values back into objects or carry state between frames.
+   `tests/test_timeline.c` checks seek order independence; keep it passing.
+
+10. **Strokes.** Every outline (rect, circle, line, arrow, free strokes) goes
+    through `ani_stroke_emit` (`src/stroke.c`); never add a second outline path.
+    Paths are flattened at object creation; rendering, the nozzle and sampling
+    never write to objects. `tests/test_stroke.c` checks the stress set for
+    NaNs, degenerate triangles, widths, spikes and gaps; after changing the
+    triangulator, also look at `./build/examples/04_stroke_stress out.png`.
+    See docs/strokes.md.
+
+11. **Layers.** Rendering goes through `ani_renderer_prepare` (outside any pass:
+    tessellate, then render and resolve isolated layers, deepest first) and then
+    `ani_renderer_draw` (inside the main pass). Opacity is never baked into
+    vertex colors: anything below opacity 1 is isolated and composited
+    (premultiplied). Translucent paints are stencil-tested; opaque paints aren't.
+    `tests/test_layers.c` checks overlap uniformity, group/nested opacity and
+    forced-vs-direct against hand-computed colors. Perf ceiling: 12 ms worst
+    frame for `examples/spike_frame_bench` (200 strokes + 50 shapes, 1080p).
+    See docs/layers.md.
+
+12. **Style.** Effects scale with effective chaos; exact-pixel tests set
+    `an_set_chaos(s, 0)` or turn the specific effect off in `an_style`. The GPU
+    `an_hash` (`shaders/hash.glsl`) must stay bit-identical to the CPU one:
+    `tests/test_gpu_hash.c` checks 4,096 inputs including edge values on Metal.
+
+13. **Touching shapes that fade together must be grouped.** Each separately faded
+    object is composited from its own resolved layer, so where two shapes share an
+    anti-aliased edge, paper shows through as a pale seam the moment both are
+    below opacity 1 (measured: the seam's green goes from 120 to 140 at opacity
+    0.995). Put them in one group and fade the group: one layer, no seam. See
+    docs/layers.md "Conflation seam" and the fade-sweep PNGs from `test_layers`.
 
 ## Build
 
 - One `Makefile`, no CMake. `make` builds the library, the examples and the tests.
   `make run EX=00_hello`, `make test`, `make clean`, `make deps`.
-- Clean build must stay under about 5 seconds. Check with `make clean && time make`.
+- Clean build must stay under about 5 seconds. Time it with
+  `scripts/time-clean-build.sh`, which builds in a throwaway copy of the tree; never
+  run `make clean` in the real tree just to time it.
   If it gets slower, find out why before adding more code. The Makefile sets
   `-j<ncpu>`; `src/sokol_impl.m` alone takes ~2.5 s and everything else overlaps it.
 - Our code compiles with `-std=c11 -Wall -Wextra -Wpedantic -Werror`. Vendor headers
@@ -93,11 +136,16 @@ src/                 library implementation (+ sokol_impl.m, offscreen.m)
 shaders/             sokol-shdc annotated GLSL
 examples/NN_name/    one directory per runnable example, main.c inside
 examples/spike_*.c   throwaway experiments; may use internal headers
+                     00_hello 01_shapes 02_timeline 03_strokes 04_stroke_stress
+                     05_style 06_look 07_palettes
 tests/               headless tests (no window, but some need a Metal device)
                      each test is a program; shared helpers in tests/check.h
-vendor/              single-header deps (sokol)
+vendor/              single-header deps (sokol, stb_image_write)
 tools/               downloaded binaries (sokol-shdc), not committed
-scripts/             fetch-deps.sh
+scripts/             fetch-deps.sh, bench.sh (frame bench, 5 runs per scenario,
+                     refuses on a busy CPU), time-clean-build.sh
+out/                 exports and PNG frames (gitignored; make clean never touches it)
+docs/experiments/    tried and not adopted, with measurements (e.g. vertex24)
 docs/progress.md     milestone log: what works, what is stubbed
 build/               all outputs (gitignored)
 ```

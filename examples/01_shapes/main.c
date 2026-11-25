@@ -67,10 +67,10 @@ int main(int argc, char **argv) {
     spinner(s);
 
     if (argc >= 3 && strcmp(argv[1], "--export") == 0) {
-        const bool ok = an_scene_export(s, &(an_export_desc){ .path = argv[2], .frames = 120 });
+        const int64_t n = an_scene_export(s, &(an_export_desc){ .path = argv[2], .frames = 120 });
         an_scene_destroy(s);
-        if (ok) printf("wrote %s\n", argv[2]);
-        return ok ? 0 : 1;
+        if (n > 0) printf("wrote %s (%lld frames)\n", argv[2], (long long)n);
+        return n > 0 ? 0 : 1;
     }
     an_scene_preview(s); // does not return on macOS
     return 0;

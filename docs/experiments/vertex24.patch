@@ -1,0 +1,142 @@
+--- a/src/tess_internal.h
++++ b/src/tess_internal.h
+@@ -8,8 +8,6 @@
+ typedef struct ani_vertex {
+     float x, y;       // scene pixels
+     float r, g, b, a; // color
+-    float pu, pv;     // fill pattern coordinates (cell units, object space); 0 otherwise
+-    float pat;        // pattern kind + density * 0.999 (0 = solid)
+ } ani_vertex;
+ 
+ // 2D affine transform: x' = a*x + c*y + tx, y' = b*x + d*y + ty
+@@ -52,6 +50,9 @@
+     ani_paint paint;  // TRIS
+     int first, count; // TRIS: vertex range
+     int layer;        // COMPOSITE: the layer to composite into `target`
++    // pattern (all zero = solid): pattern coords = (pu . (x, y, 1), pv . (x, y, 1)),
++    // kind + density in pu[3]; a patterned fill is always its own command
++    float pu[4], pv[4];
+ } ani_cmd;
+ 
+ typedef struct ani_layer {
+--- a/src/tess.c
++++ b/src/tess.c
+@@ -191,21 +191,25 @@
+ // offset), rotated by -angle and divided by the cell size. Affine in object space,
+ // so interpolation across each triangle is exact, and the pattern stays attached
+ // to the object under boil, riso, motion, rotation and scale.
+-static void set_pattern(ani_mesh *m, int v0, const an_pattern *pt, ani_affine w, an_vec2 off) {
++static void set_pattern(ani_cmd *c, const an_pattern *pt, ani_affine w, an_vec2 off) {
+     if (pt->kind == AN_PATTERN_SOLID) return;
+     const float det = w.a * w.d - w.b * w.c;
+     if (!(fabsf(det) > 0.0f)) return;
+     const float cs = cosf(pt->angle), sn = sinf(pt->angle);
+     const float inv = 1.0f / pt->size;
+     const float d = pt->density >= 1.0f ? 0.999f : pt->density * 0.999f;
+-    const float pat = (float)pt->kind + d;
+-    for (int i = v0; i < m->count; i++) {
+-        const float px = m->v[i].x - off.x - w.tx, py = m->v[i].y - off.y - w.ty;
+-        const float lx = (w.d * px - w.c * py) / det, ly = (-w.b * px + w.a * py) / det;
+-        m->v[i].pu = (cs * lx + sn * ly) * inv;
+-        m->v[i].pv = (-sn * lx + cs * ly) * inv;
+-        m->v[i].pat = pat;
+-    }
++    // local = M (p - o): M = inverse of the world's linear part, o = translation + offset
++    const float m00 = w.d / det, m01 = -w.c / det, m10 = -w.b / det, m11 = w.a / det;
++    const float ox = off.x + w.tx, oy = off.y + w.ty;
++    const float ux = inv * (cs * m00 + sn * m10), uy = inv * (cs * m01 + sn * m11);
++    const float vx = inv * (-sn * m00 + cs * m10), vy = inv * (-sn * m01 + cs * m11);
++    c->pu[0] = ux;
++    c->pu[1] = uy;
++    c->pu[2] = -(ux * ox + uy * oy);
++    c->pu[3] = (float)pt->kind + d;
++    c->pv[0] = vx;
++    c->pv[1] = vy;
++    c->pv[2] = -(vx * ox + vy * oy);
+ }
+ 
+ static bool emit_fill(ani_mesh *m, const an_obj *o, ani_affine w, an_vec2 off, an_color fill, const ani_boil *boil) {
+@@ -298,11 +302,13 @@
+     const int paints_pos = m->ncmds;
+     int ink_v0 = 0, ink_v1 = 0;
+     if (fill) {
+-        const int c = cmd_begin(m, target, fill_st ? ANI_PAINT_FILL : ANI_PAINT_DIRECT);
+-        const int fv0 = m->count;
++        const bool patterned = o->pattern.kind != AN_PATTERN_SOLID;
++        if (patterned) m->merge_barrier = true; // its own command: it carries the pattern
++        const int c = cmd_begin(m, target, fill_st ? ANI_PAINT_FILL : ANI_PAINT_DIRECT);
+         if (c < 0 || !emit_fill(m, o, w, st->riso, st->fill, &st->boil)) return false;
+-        set_pattern(m, fv0, &o->pattern, w, st->riso);
++        set_pattern(&m->cmds[c], &o->pattern, w, st->riso);
+         cmd_end(m, c);
++        if (patterned) m->merge_barrier = true;
+     }
+     if (ink) {
+         const int c = cmd_begin(m, target, ink_st ? ANI_PAINT_INK : ANI_PAINT_DIRECT);
+--- a/src/render.c
++++ b/src/render.c
+@@ -60,7 +60,6 @@
+             .attrs = {
+                 [ATTR_shape_pos] = { .format = SG_VERTEXFORMAT_FLOAT2, .offset = offsetof(ani_vertex, x) },
+                 [ATTR_shape_color0] = { .format = SG_VERTEXFORMAT_FLOAT4, .offset = offsetof(ani_vertex, r) },
+-                [ATTR_shape_pattern0] = { .format = SG_VERTEXFORMAT_FLOAT3, .offset = offsetof(ani_vertex, pu) },
+             },
+         },
+         .colors[0] = {
+@@ -273,8 +272,12 @@
+     int w, h;    // its size in pixels (main: full target)
+ } target_ctx;
+ 
+-static void set_shape_view(ani_renderer *r, const target_ctx *t, float alpha_mul) {
++static void set_shape_view(ani_renderer *r, const target_ctx *t, float alpha_mul, const ani_cmd *c) {
+     shape_params_t p = { .alpha_mul = alpha_mul };
++    if (c) {
++        memcpy(p.pat_u, c->pu, sizeof p.pat_u);
++        memcpy(p.pat_v, c->pv, sizeof p.pat_v);
++    }
+     if (t->index == ANI_TARGET_MAIN) {
+         sg_apply_viewportf(r->vx, r->vy, r->vw, r->vh, true);
+         p.view[0] = 0;
+@@ -369,7 +372,7 @@
+         }
+         sg_apply_pipeline(pip);
+         sg_apply_bindings(&(sg_bindings){ .vertex_buffers[0] = r->vbuf });
+-        set_shape_view(r, t, alpha_mul);
++        set_shape_view(r, t, alpha_mul, c);
+         sg_draw((uint32_t)c->first, (uint32_t)c->count, 1);
+     }
+ }
+--- a/shaders/shape.glsl
++++ b/shaders/shape.glsl
+@@ -16,10 +16,11 @@
+ layout(binding=0) uniform shape_params {
+     vec4 view;      // origin.xy, size.zw, in scene pixels
+     float alpha_mul;
++    vec4 pat_u;     // pattern u = pat_u.xy . pos + pat_u.z; kind + density in .w
++    vec4 pat_v;
+ };
+ in vec2 pos;
+ in vec4 color0;
+-in vec3 pattern0;
+ out vec4 color;
+ out vec3 pattern;
+ 
+@@ -27,7 +28,7 @@
+     vec2 uv = (pos - view.xy) / view.zw;
+     gl_Position = vec4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0);
+     color = vec4(color0.rgb, color0.a * alpha_mul);
+-    pattern = pattern0;
++    pattern = vec3(dot(pat_u.xy, pos) + pat_u.z, dot(pat_v.xy, pos) + pat_v.z, pat_u.w);
+ }
+ @end
+ 
+--- a/tests/test_style.c
++++ b/tests/test_style.c
+@@ -276,7 +276,6 @@
+         cmd->paint = ANI_PAINT_DIRECT;
+         for (int i = cmd->first; i < cmd->first + cmd->count; i++) {
+             m->v[i].r = m->v[i].g = m->v[i].b = m->v[i].a = 1.0f;
+-            m->v[i].pat = 0.0f;
+         }
+     }
+     CHECK(sil > 0);

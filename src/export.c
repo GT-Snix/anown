@@ -29,11 +29,11 @@ static bool shell_quote(char *out, size_t cap, const char *s) {
     return true;
 }
 
-bool an_scene_export(an_scene *s, const an_export_desc *desc) {
-    if (!s) return false;
+int64_t an_scene_export(an_scene *s, const an_export_desc *desc) {
+    if (!s) return -1;
     const an_export_desc d = desc ? *desc : (an_export_desc){ 0 };
     const char *path = d.path ? d.path : "out.mp4";
-    const int frames = d.frames > 0 ? d.frames : s->fps;
+    const int64_t frames = d.frames > 0 ? d.frames : an_scene_length(s) + 1; // 0..L inclusive
     const int crf = d.crf > 0 ? d.crf : 18;
 
     // rgba (sRGB values) -> BT.709 limited-range yuv420p, tagged so players
@@ -48,25 +48,25 @@ bool an_scene_export(an_scene *s, const an_export_desc *desc) {
              s->width, s->height, s->fps, crf);
     if (!shell_quote(cmd, sizeof cmd, path)) {
         fprintf(stderr, "anown: export path too long\n");
-        return false;
+        return -1;
     }
 
     void *pool = ani_pool_push();
-    ani_offscreen off;
-    ani_renderer r;
+    ani_offscreen off = { 0 };
+    ani_renderer r = { 0 };
     if (!ani_gfx_setup_headless()) {
         fprintf(stderr, "anown: headless Metal setup failed\n");
         ani_pool_pop(pool);
-        return false;
+        return -1;
     }
-    const bool gpu_ok = ani_offscreen_make(&off, s->width, s->height, EXPORT_SAMPLES)
-                     && ani_renderer_init(&r, SG_PIXELFORMAT_RGBA8, SG_PIXELFORMAT_NONE, EXPORT_SAMPLES);
+    const bool gpu_ok = ani_offscreen_make_ds(&off, s->width, s->height, EXPORT_SAMPLES)
+                     && ani_renderer_init(&r, SG_PIXELFORMAT_RGBA8, SG_PIXELFORMAT_DEPTH_STENCIL, EXPORT_SAMPLES);
     ani_pool_pop(pool);
     unsigned char *pixels = gpu_ok ? malloc(ani_offscreen_frame_bytes(&off)) : NULL;
     if (!pixels) {
         fprintf(stderr, "anown: export setup failed\n");
         ani_gfx_shutdown();
-        return false;
+        return -1;
     }
 
     // If ffmpeg is missing or dies, writing to the pipe raises SIGPIPE, which
@@ -84,9 +84,9 @@ bool an_scene_export(an_scene *s, const an_export_desc *desc) {
     const size_t frame_bytes = ani_offscreen_frame_bytes(&off);
     for (int64_t frame = 0; ok && frame < frames; frame++) {
         pool = ani_pool_push();
-        // The scene is static for now; animation will be driven from `frame`.
+        ok = ani_renderer_prepare(&r, s, frame, s->width, s->height);
         ani_offscreen_begin(&off, s->background);
-        ok = ani_renderer_draw(&r, s, s->width, s->height);
+        if (ok) ani_renderer_draw(&r);
         sg_end_pass();
         sg_commit();
         if (ok) ani_offscreen_readback(&off, pixels);
@@ -109,6 +109,45 @@ bool an_scene_export(an_scene *s, const an_export_desc *desc) {
     }
     sigaction(SIGPIPE, &old_pipe, NULL);
 
+    free(pixels);
+    ani_renderer_shutdown(&r);
+    ani_offscreen_destroy(&off);
+    ani_gfx_shutdown();
+    return ok ? frames : -1;
+}
+
+// ---- single frame to PNG ---------------------------------------------------------
+
+#include "stb_image_write.h"
+
+bool an_scene_save_png(an_scene *s, int64_t frame, const char *path) {
+    if (!s || !path) return false;
+    void *pool = ani_pool_push();
+    if (!ani_gfx_setup_headless()) {
+        fprintf(stderr, "anown: headless Metal setup failed\n");
+        ani_pool_pop(pool);
+        return false;
+    }
+    ani_offscreen off = { 0 };
+    ani_renderer r = { 0 };
+    bool ok = ani_offscreen_make_ds(&off, s->width, s->height, EXPORT_SAMPLES)
+           && ani_renderer_init(&r, SG_PIXELFORMAT_RGBA8, SG_PIXELFORMAT_DEPTH_STENCIL, EXPORT_SAMPLES);
+    unsigned char *pixels = ok ? malloc(ani_offscreen_frame_bytes(&off)) : NULL;
+    if (pixels) {
+        ok = ani_renderer_prepare(&r, s, frame < 0 ? 0 : frame, s->width, s->height);
+        ani_offscreen_begin(&off, s->background);
+        if (ok) ani_renderer_draw(&r);
+        sg_end_pass();
+        sg_commit();
+        if (ok) ani_offscreen_readback(&off, pixels);
+    } else {
+        ok = false;
+    }
+    ani_pool_pop(pool);
+    if (ok && !stbi_write_png(path, s->width, s->height, 4, pixels, s->width * 4)) {
+        fprintf(stderr, "anown: could not write %s\n", path);
+        ok = false;
+    }
     free(pixels);
     ani_renderer_shutdown(&r);
     ani_offscreen_destroy(&off);

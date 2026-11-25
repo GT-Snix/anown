@@ -7,6 +7,7 @@
 // render pass because sokol enqueues its command buffer when it acquires it
 // (_sg_mtl_acquire_cmd_buffer). tests/test_readback.c guards this assumption.
 #import <Metal/Metal.h>
+#import <QuartzCore/QuartzCore.h>
 
 #include "offscreen_internal.h"
 #include "sokol_log.h"
@@ -80,7 +81,23 @@ bool ani_offscreen_make(ani_offscreen *off, int width, int height, int sample_co
     return ok && off->staging != NULL;
 }
 
+bool ani_offscreen_make_ds(ani_offscreen *off, int width, int height, int sample_count) {
+    if (!ani_offscreen_make(off, width, height, sample_count)) return false;
+    off->ds = sg_make_image(&(sg_image_desc){
+        .usage.depth_stencil_attachment = true,
+        .width = width,
+        .height = height,
+        .pixel_format = SG_PIXELFORMAT_DEPTH_STENCIL,
+        .sample_count = off->sample_count,
+        .label = "anown-offscreen-ds",
+    });
+    off->ds_view = sg_make_view(&(sg_view_desc){ .depth_stencil_attachment.image = off->ds });
+    return sg_query_view_state(off->ds_view) == SG_RESOURCESTATE_VALID;
+}
+
 void ani_offscreen_destroy(ani_offscreen *off) {
+    sg_destroy_view(off->ds_view);
+    sg_destroy_image(off->ds);
     sg_destroy_view(off->resolve_view);
     sg_destroy_image(off->resolve);
     sg_destroy_view(off->color_view);
@@ -98,9 +115,12 @@ void ani_offscreen_begin(const ani_offscreen *off, an_color clear) {
             .store_action = msaa ? SG_STOREACTION_DONTCARE : SG_STOREACTION_STORE,
             .clear_value = { clear.r, clear.g, clear.b, clear.a },
         },
+        .action.depth = { .load_action = SG_LOADACTION_CLEAR, .store_action = SG_STOREACTION_DONTCARE, .clear_value = 1 },
+        .action.stencil = { .load_action = SG_LOADACTION_CLEAR, .store_action = SG_STOREACTION_DONTCARE, .clear_value = 0 },
         .attachments = {
             .colors[0] = off->color_view,
-            .resolves[0] = off->resolve_view, // invalid (id 0) without MSAA
+            .resolves[0] = off->resolve_view,   // invalid (id 0) without MSAA
+            .depth_stencil = off->ds_view,      // invalid (id 0) unless made with _ds
         },
     });
 }
@@ -132,6 +152,19 @@ void ani_offscreen_readback(ani_offscreen *off, void *dst) {
     [blit endEncoding];
     [cb commit];
     [cb waitUntilCompleted];
+    off->rb_waited = CACurrentMediaTime();
+    off->rb_gpu_start = cb.GPUStartTime;
+    off->rb_gpu_end = cb.GPUEndTime;
 
     memcpy(dst, staging.contents, size);
+    off->rb_copied = CACurrentMediaTime();
+}
+
+bool ani_mtl_cmd_buffer_times(const void *cbp, double *gpu_start, double *gpu_end) {
+    if (!cbp) return false;
+    id<MTLCommandBuffer> cb = CFBridgingRelease(cbp);
+    [cb waitUntilCompleted];
+    *gpu_start = cb.GPUStartTime;
+    *gpu_end = cb.GPUEndTime;
+    return true;
 }

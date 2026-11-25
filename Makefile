@@ -12,7 +12,7 @@ BUILD   := build
 SHDC    := tools/sokol-shdc
 
 WARN     := -Wall -Wextra -Wpedantic -Werror
-CFLAGS   := -std=c11 -O1 -g $(WARN) -Iinclude -isystem vendor/sokol -I$(BUILD)/shaders \
+CFLAGS   := -std=c11 -O1 -g $(WARN) -Iinclude -isystem vendor/sokol -isystem vendor/stb -I$(BUILD)/shaders \
             -DSOKOL_METAL -arch arm64 -MMD -MP
 # Objective-C (Metal glue). sokol_impl.m is vendor code, so it alone skips -Werror.
 OBJCFLAGS := -x objective-c -fobjc-arc -O1 -g -Wall -Wextra -Iinclude -isystem vendor/sokol \
@@ -60,6 +60,11 @@ $(BUILD)/obj/%.o: src/%.m
 $(BUILD)/obj/sokol_impl.o: src/sokol_impl.m
 	@mkdir -p $(dir $@)
 	$(CC) $(OBJCFLAGS) -c $< -o $@
+
+# stb_image_write: vendor code, so no -Werror (and no -Wpedantic)
+$(BUILD)/obj/stb_impl.o: src/stb_impl.c
+	@mkdir -p $(dir $@)
+	$(CC) $(filter-out -Werror -Wpedantic,$(CFLAGS)) -c $< -o $@
 
 $(LIB): $(LIB_OBJ)
 	@rm -f $@

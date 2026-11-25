@@ -17,7 +17,10 @@ typedef struct window_state {
     an_color clear;
     an_scene *scene; // NULL: plain clear window
     ani_renderer renderer;
-    int64_t frame; // advances once per displayed frame; not used for timing yet
+    // Playback. The wall clock only picks WHICH frame to show; what a frame
+    // looks like is a pure function of the timeline (docs/timeline.md).
+    double play_seconds; // position in the loop
+    bool paused;
 } window_state;
 
 static window_state g_win;
@@ -39,6 +42,17 @@ static void on_init(void) {
 
 static void on_frame(void) {
     const an_color c = g_win.scene ? LETTERBOX : g_win.clear;
+    bool draw = false;
+    if (g_win.scene) {
+        const an_scene *s = g_win.scene;
+        const double loop = (double)(an_scene_length(s) + 1) / (double)s->fps;
+        if (!g_win.paused) g_win.play_seconds += sapp_frame_duration();
+        if (g_win.play_seconds >= loop) g_win.play_seconds = 0.0;
+        // small epsilon so stepping by 1/fps never lands a hair short of a frame
+        const int64_t frame = (int64_t)(g_win.play_seconds * (double)s->fps + 1e-6);
+        // layers render in their own passes, before the swapchain pass begins
+        draw = ani_renderer_prepare(&g_win.renderer, s, frame, sapp_width(), sapp_height());
+    }
     sg_begin_pass(&(sg_pass){
         .action.colors[0] = {
             .load_action = SG_LOADACTION_CLEAR,
@@ -46,10 +60,30 @@ static void on_frame(void) {
         },
         .swapchain = sglue_swapchain(),
     });
-    if (g_win.scene) ani_renderer_draw(&g_win.renderer, g_win.scene, sapp_width(), sapp_height());
+    if (draw) ani_renderer_draw(&g_win.renderer);
     sg_end_pass();
     sg_commit();
-    g_win.frame++;
+}
+
+static void on_event(const sapp_event *e) {
+    if (!g_win.scene || e->type != SAPP_EVENTTYPE_KEY_DOWN) return;
+    const an_scene *s = g_win.scene;
+    const double frame_s = 1.0 / (double)s->fps;
+    const double last = (double)an_scene_length(s) * frame_s;
+    switch (e->key_code) {
+    case SAPP_KEYCODE_SPACE: g_win.paused = !g_win.paused; break;
+    case SAPP_KEYCODE_RIGHT:
+        g_win.paused = true;
+        g_win.play_seconds += frame_s;
+        if (g_win.play_seconds > last) g_win.play_seconds = last;
+        break;
+    case SAPP_KEYCODE_LEFT:
+        g_win.paused = true;
+        g_win.play_seconds -= frame_s;
+        if (g_win.play_seconds < 0.0) g_win.play_seconds = 0.0;
+        break;
+    default: break;
+    }
 }
 
 static void on_cleanup(void) {
@@ -62,6 +96,7 @@ static void run(const char *title, int width, int height, int samples) {
         .init_cb = on_init,
         .frame_cb = on_frame,
         .cleanup_cb = on_cleanup,
+        .event_cb = on_event,
         .width = width,
         .height = height,
         .sample_count = samples,

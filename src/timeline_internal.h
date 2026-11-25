@@ -1,0 +1,110 @@
+// Internal: tracks, channels, property handles and sampling. docs/timeline.md.
+#ifndef ANOWN_TIMELINE_INTERNAL_H
+#define ANOWN_TIMELINE_INTERNAL_H
+
+#include "scene_internal.h"
+
+#define ANI_TICKS_PER_SEC 1000000LL
+
+// A point in time, num/den seconds. Frames: {N, fps}. Ticks: {t, 1e6}.
+typedef struct ani_time {
+    int64_t num, den;
+} ani_time;
+
+static inline ani_time ani_frame_time(const an_scene *s, int64_t frame) {
+    return (ani_time){ frame, s->fps };
+}
+static inline ani_time ani_tick_time(int64_t ticks) {
+    return (ani_time){ ticks, ANI_TICKS_PER_SEC };
+}
+// Has the tick `t` been reached at time `at`? Exact integer comparison.
+static inline bool ani_reached(int64_t t, ani_time at) {
+    return t * at.den <= at.num * ANI_TICKS_PER_SEC;
+}
+
+// Seconds <-> ticks. Seconds round to the nearest microsecond.
+int64_t ani_ticks(double seconds);
+
+// Values are up to 4 doubles. "Natural" space is what the API uses (sRGB colors);
+// "interp" space is where interpolation happens (OKLab + alpha for colors).
+typedef struct ani_value {
+    double v[4];
+} ani_value;
+
+typedef enum ani_space { ANI_SPACE_LINEAR, ANI_SPACE_OKLAB, ANI_SPACE_STEP } ani_space;
+
+typedef struct ani_prop_info {
+    int ncomp;
+    ani_space space;
+    double floor; // absolute settle tolerance (interp units)
+} ani_prop_info;
+
+const ani_prop_info *ani_prop_info_of(an_prop p);
+
+// Generic property handle: what a track animates. Only object targets have
+// properties today; scene and camera targets slot in here later.
+typedef enum ani_target_kind { ANI_TARGET_OBJ, ANI_TARGET_SCENE } ani_target_kind;
+
+typedef struct ani_prop_ref {
+    ani_target_kind kind;
+    an_obj *obj;     // ANI_TARGET_OBJ
+    an_scene *scene; // always set: the scene that owns the target
+    an_prop prop;
+} ani_prop_ref;
+
+static inline ani_prop_ref ani_obj_prop(an_obj *o, an_prop p) {
+    return (ani_prop_ref){ .kind = ANI_TARGET_OBJ, .obj = o, .scene = o->scene, .prop = p };
+}
+
+static inline ani_prop_ref ani_scene_prop(an_scene *s, an_prop p) {
+    return (ani_prop_ref){ .kind = ANI_TARGET_SCENE, .scene = s, .prop = p };
+}
+
+// Which properties each target kind has.
+bool ani_prop_valid(ani_target_kind kind, an_prop p);
+
+// Chaos at a time: the scene dial, and an object's effective chaos (scene dial x
+// the object multipliers from the top level down). Pure.
+double ani_scene_chaos_at(an_scene *s, ani_time at);
+double ani_obj_chaos_at(an_obj *o, ani_time at);
+
+typedef struct ani_track {
+    int64_t start, duration; // ticks; duration 0 = step
+    uint32_t seq;
+    an_ease ease;
+    ani_value from, to, v0;  // interp space; v0 in interp units per second
+    ani_value from_natural;  // exact natural start value
+    ani_value to_natural;    // exact natural end value
+} ani_track;
+
+struct ani_channel {
+    ani_track *tracks; // sorted by (start, seq)
+    int count, cap;
+};
+
+// Base (natural) value of a property.
+ani_value ani_base_get(ani_prop_ref ref);
+// Sampled natural value at time `at` (base + winning track).
+ani_value ani_sample(ani_prop_ref ref, ani_time at);
+// Same, also returning the analytic velocity (interp units per second; 0 if
+// no track is running). Pure: used for the nozzle speed.
+ani_value ani_sample_vel(ani_prop_ref ref, ani_time at, ani_value *velocity);
+
+// Record a track at `start`. duration < 0: spring settle time (springs only).
+// If `relative`, value is a delta added to the value at `start` (linear props).
+// If `from` is given, the track starts there (natural space) at rest, instead of
+// continuing from the channel.
+// Returns the track's end in ticks.
+int64_t ani_record(an_scene *s, ani_prop_ref ref, int64_t start, int64_t duration,
+                   an_ease ease, ani_value value, bool relative, const ani_value *from);
+
+// Setter semantics: zero-length take-over track at the cursor, or a base write
+// when nothing could tell the difference.
+void ani_set(ani_prop_ref ref, ani_value natural);
+
+// Does the object exist at `at`?
+static inline bool ani_obj_exists(const an_obj *o, ani_time at) {
+    return ani_reached(o->birth, at);
+}
+
+#endif

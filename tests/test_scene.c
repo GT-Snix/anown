@@ -2,6 +2,7 @@
 // draw order, world transforms, deterministic tessellation. CPU only, no GPU.
 #include "anown.h"
 #include "check.h"
+#include "path_internal.h"
 #include "tess_internal.h"
 
 #include <stdlib.h>
@@ -104,6 +105,7 @@ static void test_world_transform(void) {
 // each rect is 6 vertices, after the 6-vertex background.
 static void test_draw_order(void) {
     an_scene *s = an_scene_create(NULL);
+    an_set_chaos(s, 0); // structural counts: rects are plain quads (no boil)
     an_rect(s, &(an_rect_opts){ .fill = AN_HEX(0x010000), .z = 1 });  // id 1
     an_rect(s, &(an_rect_opts){ .fill = AN_HEX(0x020000) });          // id 2, z 0
     an_obj *g = an_group(s, &(an_group_opts){ .z = -1 });               // id 3
@@ -113,7 +115,7 @@ static void test_draw_order(void) {
 
     ani_mesh m;
     ani_mesh_init(&m);
-    CHECK(ani_tess_scene(&m, s));
+    CHECK(ani_tess_scene(&m, s, 0));
     CHECK(m.count == 6 * 6);
     // expected: group (z -1) first with its children by z: 0x04, 0x03;
     // then z 0 in creation order: 0x02, 0x05; then z 1: 0x01
@@ -137,18 +139,20 @@ static void test_tessellation_deterministic(void) {
             an_circle(s, &(an_circle_opts){ .parent = g, .pos = { (float)i * 40, 0 }, .radius = 5.0f + (float)i });
             an_line(s, &(an_line_opts){ .parent = g, .from = { 0, 0 }, .to = { (float)i * 40, 100 } });
         }
-        CHECK(ani_tess_scene(run ? &m2 : &m1, s));
+        CHECK(ani_tess_scene(run ? &m2 : &m1, s, 0));
         an_scene_destroy(s);
     }
     CHECK(m1.count == m2.count && m1.count > 0);
     CHECK(memcmp(m1.v, m2.v, (size_t)m1.count * sizeof(ani_vertex)) == 0);
-    CHECK(ani_circle_segments(1) == 24 && ani_circle_segments(1e6f) == 512);
+    CHECK(ani_circle_segments(1) == 16 && ani_circle_segments(1e6f) == 2048); // clamped
+    CHECK(ani_circle_segments(100) == 100); // ceil(pi / acos(1 - 0.05/100)) = ceil(99.34), via bc
     ani_mesh_free(&m1);
     ani_mesh_free(&m2);
 }
 
 static void test_many_objects(void) {
     an_scene *s = an_scene_create(NULL);
+    an_set_chaos(s, 0); // structural counts: rects are plain quads (no boil)
     an_obj *parent = NULL;
     for (int i = 0; i < 10000; i++) {
         an_obj *o = an_rect(s, &(an_rect_opts){ .parent = (i % 100 == 0) ? NULL : parent });
@@ -158,7 +162,7 @@ static void test_many_objects(void) {
     CHECK(s->count == 10000 && child_count(&s->root) == 100);
     ani_mesh m;
     ani_mesh_init(&m);
-    CHECK(ani_tess_scene(&m, s));
+    CHECK(ani_tess_scene(&m, s, 0));
     CHECK(m.count == 6 + 10000 * 6);
     ani_mesh_free(&m);
     an_scene_destroy(s);

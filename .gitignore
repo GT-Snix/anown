@@ -3,3 +3,4 @@ tools/
 .DS_Store
 *.dSYM/
 *.mp4
+out/

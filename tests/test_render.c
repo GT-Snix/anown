@@ -18,8 +18,9 @@ static uint32_t px_at(const unsigned char *px, int x, int y) {
 
 static void render(an_scene *s, ani_offscreen *off, ani_renderer *r, unsigned char *out) {
     void *pool = ani_pool_push();
+    CHECK(ani_renderer_prepare(r, s, 0, W, H));
     ani_offscreen_begin(off, AN_BLACK);
-    CHECK(ani_renderer_draw(r, s, W, H));
+    ani_renderer_draw(r);
     sg_end_pass();
     sg_commit();
     ani_offscreen_readback(off, out);
@@ -33,10 +34,11 @@ int main(void) {
     }
     ani_offscreen off;
     ani_renderer r;
-    CHECK(ani_offscreen_make(&off, W, H, 4));
-    CHECK(ani_renderer_init(&r, SG_PIXELFORMAT_RGBA8, SG_PIXELFORMAT_NONE, 4));
+    CHECK(ani_offscreen_make_ds(&off, W, H, 4));
+    CHECK(ani_renderer_init(&r, SG_PIXELFORMAT_RGBA8, SG_PIXELFORMAT_DEPTH_STENCIL, 4));
 
     an_scene *s = an_scene_create(&(an_scene_desc){ .width = W, .height = H });
+    an_set_chaos(s, 0); // exact-pixel test: no grain, no effects
     // rect centered at (60,50), 40x20 -> covers x 40..79, y 40..59
     an_rect(s, &(an_rect_opts){ .pos = { 60, 50 }, .size = { 40, 20 }, .fill = AN_HEX(0xFF48B0) });
     // circle at (200,100) r 30, drawn above a rect it overlaps (higher z)
