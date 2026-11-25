@@ -353,3 +353,65 @@ One per object type, each with its tests and docs:
 2. the code marker;
 3. callouts and pointers;
 4. the example, `make example-quicksort`, and the API-friction list.
+
+## API friction from writing `examples/10_quicksort` (2026-11-25)
+
+Written the way a user would write it. Nothing below was worked around inside
+the library; each item shows how the script coped.
+
+1. **Parallel with a gap is awkward.** `an_play_async` returns nothing, so the
+   script can't know when the async anim ends.
+   - "Start the swap, 0.15 s later move the code marker, continue when both are
+     done" became
+     `an_play_async(swap); an_wait(0.15); an_play(goto); an_wait(0.9 - 0.15 - 0.35 + 0.1)`,
+     with the swap's and goto's default durations typed in by hand.
+   - Change a default and the script silently overlaps.
+   - Wanted: `an_play_async` returning the anim's end time, plus an
+     `an_wait_until(s, t)`, or a join (`an_play_all` that takes per-anim offsets).
+2. **Default durations are invisible.** The script has to know that a swap is
+   0.9 s and a goto 0.35 s to compose them (see 1). Wanted: a way to ask an anim
+   how long it will run (`an_anim_duration`), and better, item 1.
+3. **"Invisible until my verb starts" needs per-object opacity flips.** A pop
+   starts from scale 0, but only once its track starts; before that the element
+   shows at scale 1.
+   - The script sets every element's opacity to 0 at the start, then to 1 at
+     the moment of its pop (and the same for the title's letters).
+   - It's correct, but only because the flip is instant. A fade on a cell of a
+     touching array would seam (rule 13).
+   - Wanted: verbs that own the "before" state (`.hold_from = true`: the from
+     value applies from the object's birth until the verb starts).
+4. **`an_array_pointer` takes no options.** There's no `.hidden`, size, color
+   or offset.
+   - The script hides pointers with opacity setters right after creating them.
+   - The fixed geometry puts the pointer labels 2.2 cell heights below the row.
+     Together with the swap arcs' room above it (also only in the doc), that
+     fixed the whole layout: the array had to sit at y 800 with 80 px cells.
+   - Wanted: `an_array_pointer_opts`, and a function that reports the space a
+     swap needs above the row.
+5. **`an_draw` on a group doesn't reach its children.** Hence
+   `an_callout_draw`. The same will come up for any composite object; a
+   group-level draw that spreads over the children (like a text's) would be
+   more uniform.
+6. **No filled arbitrary polygon.** Only rects, circles and glyphs fill. The
+   code marker's triangle became an arrow, and callout heads are two strokes.
+7. **`NULL` wasn't available from `anown.h`**, although passing NULL for "all
+   defaults" is the documented style. Fixed: anown.h includes <stddef.h>.
+8. **No script-time query of an object's state at the cursor.** `an_obj_get`
+   reports the frame last passed to `an_seek`, not the cursor. So the script
+   keeps its own `done[]` array to know which cells are green before dimming
+   the others.
+   - Wanted: `an_obj_get_at_cursor`, or `an_obj_get_at(o, seconds)`.
+9. **Highlight / unhighlight only knows one base color.** With three states
+   (active, dimmed, done), the script stops using unhighlight and paints fill
+   tracks itself (`paint()`). Fine, but the helper didn't help.
+10. **Code lines are referenced by number** (`line(5)`). Edit the snippet and
+    every number in the script shifts. Wanted: named lines in the code text
+    (a trailing `// @swap` marker, stripped from the display) and
+    `an_code_goto_label(code, "swap")`.
+11. **Layout needs numbers that live in the docs.** Arc heights (how much room
+    a swap needs above the row) and pointer distances (below it) can't be asked
+    for. The layout was found by reading docs/explainer.md, not by asking the
+    API.
+
+Parallel with a gap (doc item 5): demonstrated in `swap_slots`; it is awkward
+(item 1).

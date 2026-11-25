@@ -41,7 +41,7 @@ EX_BIN   += $(SPIKES:%=$(BUILD)/examples/%)
 TESTS    := $(patsubst tests/%.c,%,$(wildcard tests/test_*.c))
 TEST_BIN := $(TESTS:%=$(BUILD)/tests/%)
 
-.PHONY: all run test deps clean clean-cache
+.PHONY: all run test deps clean clean-cache example-quicksort
 # Keep generated shader headers; make would otherwise delete them as intermediates.
 .SECONDARY: $(SHADER_H)
 all: $(LIB) $(EX_BIN) $(TEST_BIN)
@@ -108,6 +108,13 @@ $(BUILD)/examples/spike_%: examples/spike_%.c $(SHADER_H) $(LIB)
 $(BUILD)/tests/%: tests/%.c $(SHADER_H) $(LIB)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(INTERNAL) $< $(LIB) $(LDLIBS) -o $@
+
+# The quicksort explainer, exported unattended: out/quicksort.mp4 (share mode)
+# and every 10th frame as PNGs in out/quicksort_frames/.
+example-quicksort: $(BUILD)/examples/10_quicksort
+	@mkdir -p out/quicksort_frames
+	./$(BUILD)/examples/10_quicksort --export out/quicksort.mp4
+	./$(BUILD)/examples/10_quicksort --frames out/quicksort_frames 10
 
 run: $(BUILD)/examples/$(EX)
 	./$(BUILD)/examples/$(EX)

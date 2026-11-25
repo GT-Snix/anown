@@ -867,3 +867,23 @@ re-aiming; 9B's edges are noted in the doc. `anown.h` now includes
 Tests (test_explainer): arrow start at the label's edge and end gap short,
 straight and bent (by hand), left-side targets; drawing on; the pointer's
 geometry and an exact slide. 19 test programs pass; reference PNGs identical.
+
+## Explainer objects, 4: examples/10_quicksort (2026-11-25)
+
+Lomuto quicksort on 9 distinct values (1..20) from the scene's seeded RNG,
+sorted at script time in plain C while recording: title slap (per letter, impact
+shake), cells popping in, the code panel fading in, per partition the active
+range bright and the rest dimmed (fill tracks, not opacity), the pivot in
+magenta, `i` / `j` pointers, the code marker on the executing line, swaps on
+lifted arcs, each placed pivot slapped green, and a final array slap with a
+"sorted!" callout. Value labels 34 px (80 px cells).
+`make example-quicksort` exports it unattended: `out/quicksort.mp4` (2730
+frames, 45.5 s, 1080p60, share mode, 23.9 MB, 4.2 Mbps, BT.709) and every 10th
+frame in `out/quicksort_frames/` (273 PNGs); 279 s wall for both. No swap
+clamped or overlapped (no warnings).
+The API friction found while writing it is listed in docs/explainer.md
+("API friction from writing examples/10_quicksort"): 11 items, the main ones
+being that `an_play_async` doesn't return its end time (parallel-with-a-gap
+needs hand-typed default durations), verbs can't hold their start state before
+they begin, `an_array_pointer` has no options, and there's no script-time
+query of an object's state at the cursor.
