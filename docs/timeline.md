@@ -261,3 +261,19 @@ its stream.
   - Creation time and zero-opacity skipping.
 - `tests/test_rng.c`: `an_hash` pinned values and order independence; duplicate
   names rejected.
+
+## Handles (2026-11-25)
+
+`an_play`, `an_play_async`, `an_par` and `an_stagger` return an `an_handle`:
+`.start` and `.end` in seconds (for par/stagger, the earliest start and the
+latest end). `an_wait_until(h)` moves the cursor to `h.end` if it's later.
+Handles are script-time values only (rendering never sees them). "Run A, start B
+a little later, continue when both are done" is
+
+    an_handle a = an_play_async(s, swap);
+    an_wait(s, 0.15f);
+    an_play(s, goto_line);
+    an_wait_until(a);
+
+with no durations typed by hand. A verb or a swap returns the end of its main
+motion; a swap's landing squash runs a little past it.

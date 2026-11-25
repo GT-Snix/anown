@@ -674,33 +674,50 @@ int64_t ani_record_anim(an_scene *s, const an_anim *a, int64_t start) {
                       a->has_from ? &from : NULL);
 }
 
-void an_play(an_scene *s, an_anim a) {
-    if (!s) return;
-    const int64_t end = ani_record_anim(s, &a, s->cursor);
-    if (end > s->cursor) s->cursor = end;
+static an_handle handle(an_scene *s, int64_t start, int64_t end) {
+    return (an_handle){ .scene = s, .start = (double)start / (double)ANI_TICKS_PER_SEC,
+                        .end = (double)end / (double)ANI_TICKS_PER_SEC };
 }
 
-void an_play_async(an_scene *s, an_anim a) {
-    if (s) ani_record_anim(s, &a, s->cursor);
+an_handle an_play(an_scene *s, an_anim a) {
+    if (!s) return (an_handle){ 0 };
+    const int64_t start = s->cursor;
+    const int64_t end = ani_record_anim(s, &a, start);
+    if (end > s->cursor) s->cursor = end;
+    return handle(s, start, end > start ? end : start);
+}
+
+an_handle an_play_async(an_scene *s, an_anim a) {
+    if (!s) return (an_handle){ 0 };
+    const int64_t end = ani_record_anim(s, &a, s->cursor);
+    return handle(s, s->cursor, end > s->cursor ? end : s->cursor);
+}
+
+void an_wait_until(an_handle h) {
+    an_scene *s = h.scene;
+    if (!s) return;
+    const int64_t end = llround(h.end * (double)ANI_TICKS_PER_SEC); // exact: ticks came from integers
+    if (end > s->cursor) s->cursor = end;
 }
 
 void an_wait(an_scene *s, float seconds) {
     if (s) s->cursor += ani_ticks(seconds);
 }
 
-void an_par(an_scene *s, int n, const an_anim *anims) {
-    an_stagger(s, n, anims, 0.0f);
+an_handle an_par(an_scene *s, int n, const an_anim *anims) {
+    return an_stagger(s, n, anims, 0.0f);
 }
 
-void an_stagger(an_scene *s, int n, const an_anim *anims, float gap_seconds) {
-    if (!s || !anims) return;
-    const int64_t gap = ani_ticks(gap_seconds);
+an_handle an_stagger(an_scene *s, int n, const an_anim *anims, float gap_seconds) {
+    if (!s || !anims) return (an_handle){ 0 };
+    const int64_t gap = ani_ticks(gap_seconds), start = s->cursor;
     int64_t latest = s->cursor;
     for (int i = 0; i < n; i++) {
         const int64_t end = ani_record_anim(s, &anims[i], s->cursor + (int64_t)i * gap);
         if (end > latest) latest = end;
     }
     s->cursor = latest;
+    return handle(s, start, latest);
 }
 
 // ---- public: time, seeking -----------------------------------------------------------------

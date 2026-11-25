@@ -332,6 +332,34 @@ static void test_chaos(void) {
     an_scene_destroy(s);
 }
 
+// Handles: what playing returns (seconds; ticks exact).
+//   cursor 0.5: an_play(fade, 1 s) -> start 0.5, end 1.5, cursor 1.5
+//   an_play_async(move, 2 s) -> 1.5 .. 3.5, cursor stays 1.5
+//   an_stagger(3 anims of 1 s, gap 0.25) -> 1.5 .. 1.5 + 0.5 + 1 = 3.0, cursor 3.0
+//   an_wait_until(async) -> cursor 3.5; an_wait_until(the first) -> stays 3.5
+//   a swap: 0.9 s from the cursor
+static void test_handles(void) {
+    an_scene *s = an_scene_create(NULL);
+    an_obj *o = an_rect(s, NULL), *p = an_rect(s, NULL);
+    an_wait(s, 0.5f);
+    const an_handle h1 = an_play(s, an_fade_to(o, 0.5f, &(an_anim_opts){ .duration = 1 }));
+    CHECK(h1.scene == s && h1.start == 0.5 && h1.end == 1.5 && an_scene_time(s) == 1.5);
+    const an_handle h2 = an_play_async(s, an_move_by(p, (an_vec2){ 10, 0 }, &(an_anim_opts){ .duration = 2 }));
+    CHECK(h2.start == 1.5 && h2.end == 3.5 && an_scene_time(s) == 1.5);
+    an_anim three[3] = { an_fade_to(o, 1, NULL), an_fade_to(p, 1, NULL), an_rotate_by(o, 1, NULL) };
+    const an_handle h3 = an_stagger(s, 3, three, 0.25f);
+    CHECK(h3.start == 1.5 && h3.end == 3.0 && an_scene_time(s) == 3.0);
+    an_wait_until(h2);
+    CHECK(an_scene_time(s) == 3.5);
+    an_wait_until(h1);
+    CHECK(an_scene_time(s) == 3.5);
+    static const int v[3] = { 1, 2, 3 };
+    an_obj *a = an_array(s, &(an_array_opts){ .pos = { 960, 800 }, .values = v, .count = 3 });
+    const an_handle sw = an_play_async(s, an_array_swap(a, 0, 2, NULL));
+    CHECK(sw.start == 3.5 && sw.end == 4.4);
+    an_scene_destroy(s);
+}
+
 int main(void) {
     test_chaos();
     test_cursor();
@@ -340,5 +368,6 @@ int main(void) {
     test_takeover();
     test_setters();
     test_lifetime_and_opacity();
+    test_handles();
     return check_done("test_timeline");
 }

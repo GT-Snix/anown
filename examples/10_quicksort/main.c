@@ -30,17 +30,19 @@ static an_color c_cell, c_dim, c_pivot, c_done;
 static void line(int n) { an_play(S, an_code_goto(code, n, NULL)); }
 
 // recolor one slot (the element currently there)
-static void paint(int slot, an_color c, float secs) {
-    an_play_async(S, an_array_highlight(arr, slot, c, &(an_anim_opts){ .duration = secs }));
+static an_handle paint(int slot, an_color c, float secs) {
+    return an_play_async(S, an_array_highlight(arr, slot, c, &(an_anim_opts){ .duration = secs }));
 }
 
 // the active range bright, the rest dim (done cells stay green)
 static void focus(int lo, int hi) {
+    an_handle h = { 0 };
     for (int k = 0; k < N; k++) {
         if (done[k]) continue;
-        paint(k, (k >= lo && k <= hi) ? c_cell : c_dim, 0.3f);
+        h = paint(k, (k >= lo && k <= hi) ? c_cell : c_dim, 0.3f);
     }
-    an_wait(S, 0.35f);
+    an_wait_until(h);
+    an_wait(S, 0.05f); // a beat
 }
 
 // swap two slots: the cells travel while the code marker moves to the swap line
@@ -52,10 +54,11 @@ static void swap_slots(int i, int j, int code_line) {
         line(code_line);
         return;
     }
-    an_play_async(S, an_array_swap(arr, i, j, NULL)); // 0.9 s
+    const an_handle sw = an_play_async(S, an_array_swap(arr, i, j, NULL));
     an_wait(S, 0.15f);
-    an_play(S, an_code_goto(code, code_line, NULL));  // 0.35 s, starts 0.15 s in
-    an_wait(S, 0.9f - 0.15f - 0.35f + 0.1f);          // the rest of the swap (by hand)
+    an_play(S, an_code_goto(code, code_line, NULL)); // the marker moves while the cells travel
+    an_wait_until(sw);
+    an_wait(S, 0.1f); // a beat
 }
 
 static int partition(int lo, int hi) {
@@ -87,8 +90,8 @@ static void quicksort(int lo, int hi) {
     if (lo > hi) return;
     if (lo == hi) { // one element: already in place
         done[lo] = true;
-        paint(lo, c_done, 0.3f);
-        an_wait(S, 0.35f);
+        an_wait_until(paint(lo, c_done, 0.3f));
+        an_wait(S, 0.05f); // a beat
         return;
     }
     focus(lo, hi);

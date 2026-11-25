@@ -631,16 +631,26 @@ an_obj *an_array_pointer(an_obj *arr, const char *label, int slot);
 /* A pos track sliding the pointer to `slot` (default 0.35 s). */
 an_anim an_array_point(an_obj *pointer, int slot, const an_anim_opts *opts);
 
+/* What playing returns: when the recorded animation starts and ends (seconds
+ * on the timeline; for an_par / an_stagger, the earliest start and the latest
+ * end). Wait for it with an_wait_until; nothing about rendering depends on it. */
+typedef struct an_handle {
+    an_scene *scene;
+    double start, end;
+} an_handle;
+
 /* Start at the cursor and move the cursor to the animation's end. */
-void an_play(an_scene *s, an_anim a);
+an_handle an_play(an_scene *s, an_anim a);
 /* Start at the cursor; the cursor stays. */
-void an_play_async(an_scene *s, an_anim a);
+an_handle an_play_async(an_scene *s, an_anim a);
 /* Advance the cursor. */
 void an_wait(an_scene *s, float seconds);
 /* Start all at the cursor; the cursor moves to the latest end. */
-void an_par(an_scene *s, int n, const an_anim *anims);
+an_handle an_par(an_scene *s, int n, const an_anim *anims);
 /* Start anim i at cursor + i * gap; the cursor moves to the latest end. */
-void an_stagger(an_scene *s, int n, const an_anim *anims, float gap_seconds);
+an_handle an_stagger(an_scene *s, int n, const an_anim *anims, float gap_seconds);
+/* Move the cursor to the handle's end (if it's later than the cursor). */
+void an_wait_until(an_handle h);
 
 /* The cursor, in seconds. */
 double an_scene_time(const an_scene *s);

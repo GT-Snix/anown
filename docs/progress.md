@@ -899,3 +899,13 @@ animated), PNGs encoded on 8 threads. 10_quicksort takes `--export FILE`,
 `--frames DIR`, `--every N` (default 10); `make example-quicksort` writes only
 the mp4, `make example-quicksort EVERY=10` also dumps frames. Every 10th frame:
 18 s instead of ~230 s, all 273 byte-identical to the golden set.
+
+## API fixes, 1: handles (2026-11-25)
+
+`an_play` / `an_play_async` / `an_par` / `an_stagger` return `an_handle`
+{scene, start, end}; `an_wait_until(h)` (docs/timeline.md, "Handles"). The array,
+marker and callout calls are anims, so they get handles when played. The
+quicksort script's hand-typed arithmetic (`an_wait(0.9 - 0.15 - 0.35 + 0.1)` and
+the paint waits) is gone: `an_wait_until(swap)` plus explicit beats. Golden
+comparison: all 273 frames identical (the cursor lands on the same ticks).
+Test: `test_handles` in test_timeline (hand-computed starts and ends).
