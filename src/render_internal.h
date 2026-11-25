@@ -18,9 +18,14 @@
 #define ANI_LAYER_BUDGET ((size_t)512 * 1024 * 1024)
 // Layer size classes: width and height rounded up to a multiple of this.
 #define ANI_LAYER_CLASS 128
+// Cached layer targets, at most (sokol's image pool holds 128 images: 2 per
+// scratch, 1 per resolve, plus the main targets). Unused ones are freed first.
+#define ANI_MAX_SCRATCHES 16
+#define ANI_MAX_RESOLVES 48
 
 typedef struct ani_rt_scratch {
-    int w, h;
+    int w, h;          // 0: a freed slot
+    bool in_use;       // by a layer this frame
     sg_image color, ds;
     sg_view color_view, ds_view;
 } ani_rt_scratch;

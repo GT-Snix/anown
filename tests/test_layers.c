@@ -221,7 +221,7 @@ static void test_budget_fallback(void) {
     an_obj_set_opacity(o, 0.5f);
     const size_t saved = g_r.budget;
     const size_t used = g_r.pool_bytes;
-    g_r.budget = used; // nothing new fits
+    g_r.budget = 0; // nothing fits, even after freeing the unused cached targets
     // a different size class than anything allocated so far forces a new allocation
     an_obj *big = an_rect(s, &(an_rect_opts){ .pos = { 160, 100 }, .size = { 300, 190 }, .fill = AN_HEX(0x0078BF) });
     an_obj_set_opacity(big, 0.5f);
@@ -232,6 +232,30 @@ static void test_budget_fallback(void) {
     CHECK(g_r.pool_bytes <= used);
     g_r.budget = saved;
     an_scene_destroy(s);
+}
+
+// Many size classes over a long render (the eigen video ran out of sokol's image
+// pool): 100 frames, each with a translucent rect of a new size class. The cache
+// stays within ANI_MAX_SCRATCHES / ANI_MAX_RESOLVES live targets (unused ones are
+// freed), and no layer ever falls back.
+static void test_pool_bounded(void) {
+    int worst_s = 0, worst_r = 0, fallbacks = 0;
+    for (int k = 0; k < 100; k++) {
+        an_scene *s = new_scene();
+        an_obj *o = an_rect(s, &(an_rect_opts){ .pos = { 160, 100 }, .size = { 20.0f + 2.9f * (float)k, 12.0f + 1.7f * (float)k },
+                                                .fill = AN_HEX(0x0078BF) });
+        an_obj_set_opacity(o, 0.5f);
+        render(s, 0, false);
+        fallbacks += g_r.layers_fallback;
+        int ls = 0, lr = 0;
+        for (int i = 0; i < g_r.nscratch; i++) ls += g_r.scratches[i].w != 0;
+        for (int i = 0; i < g_r.nresolve; i++) lr += g_r.resolves[i].w != 0;
+        worst_s = ls > worst_s ? ls : worst_s;
+        worst_r = lr > worst_r ? lr : worst_r;
+        an_scene_destroy(s);
+    }
+    printf("  100 size classes: at most %d scratch and %d resolve targets live\n", worst_s, worst_r);
+    CHECK(fallbacks == 0 && worst_s <= ANI_MAX_SCRATCHES && worst_r <= ANI_MAX_RESOLVES);
 }
 
 // The pool is reused: rendering the same frame again allocates nothing.
@@ -391,6 +415,7 @@ int main(void) {
     test_forced_vs_direct();
     test_pool_stable();
     test_budget_fallback();
+    test_pool_bounded();
 
     free(g_px);
     ani_renderer_shutdown(&g_r);

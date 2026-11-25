@@ -241,12 +241,14 @@ bool ani_renderer_init(ani_renderer *r, sg_pixel_format color_format,
 
 void ani_renderer_shutdown(ani_renderer *r) {
     for (int i = 0; i < r->nscratch; i++) {
+        if (r->scratches[i].w == 0) continue; // a freed slot
         sg_destroy_view(r->scratches[i].color_view);
         sg_destroy_view(r->scratches[i].ds_view);
         sg_destroy_image(r->scratches[i].color);
         sg_destroy_image(r->scratches[i].ds);
     }
     for (int i = 0; i < r->nresolve; i++) {
+        if (r->resolves[i].w == 0) continue; // a freed slot
         sg_destroy_view(r->resolves[i].resolve_view);
         sg_destroy_view(r->resolves[i].tex_view);
         sg_destroy_image(r->resolves[i].img);
@@ -282,30 +284,82 @@ static int class_of(int v, int cap) {
 static size_t scratch_bytes(int w, int h) { return (size_t)w * (size_t)h * 48; }
 static size_t resolve_bytes(int w, int h) { return (size_t)w * (size_t)h * 4; }
 
+static void free_scratch(ani_renderer *r, ani_rt_scratch *sc) {
+    sg_destroy_view(sc->color_view);
+    sg_destroy_view(sc->ds_view);
+    sg_destroy_image(sc->color);
+    sg_destroy_image(sc->ds);
+    r->pool_bytes -= scratch_bytes(sc->w, sc->h);
+    *sc = (ani_rt_scratch){ 0 };
+}
+
+// Scratch (multisampled) targets, cached by size class and shared by every
+// layer of that size this frame; at most ANI_MAX_SCRATCHES, the unused ones freed
+// in place first. -1 if one can't be made: the layer draws directly.
 static int get_scratch(ani_renderer *r, int w, int h) {
     for (int i = 0; i < r->nscratch; i++) {
-        if (r->scratches[i].w == w && r->scratches[i].h == h) return i;
+        if (r->scratches[i].w == w && r->scratches[i].h == h) {
+            r->scratches[i].in_use = true;
+            return i;
+        }
     }
-    if (r->nscratch == (int)(sizeof r->scratches / sizeof r->scratches[0])) return -1;
-    if (r->pool_bytes + scratch_bytes(w, h) > r->budget) return -1;
-    ani_rt_scratch *sc = &r->scratches[r->nscratch];
-    sc->w = w;
-    sc->h = h;
+    int live = 0;
+    for (int i = 0; i < r->nscratch; i++) live += r->scratches[i].w != 0;
+    if (live >= ANI_MAX_SCRATCHES || r->pool_bytes + scratch_bytes(w, h) > r->budget) {
+        for (int i = 0; i < r->nscratch; i++)
+            if (r->scratches[i].w != 0 && !r->scratches[i].in_use) free_scratch(r, &r->scratches[i]);
+        live = 0;
+        for (int i = 0; i < r->nscratch; i++) live += r->scratches[i].w != 0;
+        if (live >= ANI_MAX_SCRATCHES || r->pool_bytes + scratch_bytes(w, h) > r->budget) return -1;
+    }
+    int slot = -1;
+    for (int i = 0; i < r->nscratch && slot < 0; i++)
+        if (r->scratches[i].w == 0) slot = i;
+    if (slot < 0) {
+        if (r->nscratch == (int)(sizeof r->scratches / sizeof r->scratches[0])) return -1;
+        slot = r->nscratch++;
+    }
+    ani_rt_scratch *sc = &r->scratches[slot];
+    *sc = (ani_rt_scratch){ .w = w, .h = h, .in_use = true };
     sc->color = sg_make_image(&(sg_image_desc){ .usage.color_attachment = true, .width = w, .height = h,
                                                 .pixel_format = LAYER_COLOR_FMT, .sample_count = ANI_LAYER_SAMPLES,
                                                 .label = "anown-layer-msaa" });
     sc->ds = sg_make_image(&(sg_image_desc){ .usage.depth_stencil_attachment = true, .width = w, .height = h,
                                              .pixel_format = LAYER_DS_FMT, .sample_count = ANI_LAYER_SAMPLES,
                                              .label = "anown-layer-ds" });
+    r->pool_bytes += scratch_bytes(w, h);
+    if (sg_query_image_state(sc->color) != SG_RESOURCESTATE_VALID || sg_query_image_state(sc->ds) != SG_RESOURCESTATE_VALID) {
+        free_scratch(r, sc);
+        return -1;
+    }
     sc->color_view = sg_make_view(&(sg_view_desc){ .color_attachment.image = sc->color });
     sc->ds_view = sg_make_view(&(sg_view_desc){ .depth_stencil_attachment.image = sc->ds });
     if (sg_query_view_state(sc->color_view) != SG_RESOURCESTATE_VALID ||
-        sg_query_view_state(sc->ds_view) != SG_RESOURCESTATE_VALID)
+        sg_query_view_state(sc->ds_view) != SG_RESOURCESTATE_VALID) {
+        free_scratch(r, sc);
         return -1;
-    r->pool_bytes += scratch_bytes(w, h);
-    return r->nscratch++;
+    }
+    return slot;
 }
 
+// Free the resolve targets no layer uses this frame, in place (slots keep their
+// index, so targets handed out earlier this frame stay valid; a freed slot has w 0).
+static void evict_resolves(ani_renderer *r) {
+    for (int i = 0; i < r->nresolve; i++) {
+        ani_rt_resolve *rs = &r->resolves[i];
+        if (rs->in_use || rs->w == 0) continue;
+        sg_destroy_view(rs->resolve_view);
+        sg_destroy_view(rs->tex_view);
+        sg_destroy_image(rs->img);
+        r->pool_bytes -= resolve_bytes(rs->w, rs->h);
+        *rs = (ani_rt_resolve){ 0 };
+    }
+}
+
+// Resolve targets are cached by size class. Kept to ANI_MAX_RESOLVES (sokol's
+// image and view pools are fixed): past that, or past the memory budget, the
+// unused ones are freed first. If a target still can't be made, -1: the layer
+// falls back to drawing directly (a warning once).
 static int get_resolve(ani_renderer *r, int w, int h) {
     for (int i = 0; i < r->nresolve; i++) {
         if (!r->resolves[i].in_use && r->resolves[i].w == w && r->resolves[i].h == h) {
@@ -313,18 +367,39 @@ static int get_resolve(ani_renderer *r, int w, int h) {
             return i;
         }
     }
-    if (r->pool_bytes + resolve_bytes(w, h) > r->budget) return -1;
-    if (!grow((void **)&r->resolves, &r->resolve_cap, r->nresolve + 1, sizeof(ani_rt_resolve))) return -1;
-    ani_rt_resolve *rs = &r->resolves[r->nresolve];
-    *rs = (ani_rt_resolve){ .w = w, .h = h, .in_use = true };
-    rs->img = sg_make_image(&(sg_image_desc){ .usage.resolve_attachment = true, .width = w, .height = h,
-                                              .pixel_format = LAYER_COLOR_FMT, .sample_count = 1,
-                                              .label = "anown-layer-resolve" });
-    rs->resolve_view = sg_make_view(&(sg_view_desc){ .resolve_attachment.image = rs->img });
-    rs->tex_view = sg_make_view(&(sg_view_desc){ .texture.image = rs->img });
-    if (sg_query_view_state(rs->resolve_view) != SG_RESOURCESTATE_VALID) return -1;
+    int live = 0;
+    for (int i = 0; i < r->nresolve; i++) live += r->resolves[i].w != 0;
+    if (live >= ANI_MAX_RESOLVES || r->pool_bytes + resolve_bytes(w, h) > r->budget) evict_resolves(r);
+    live = 0;
+    for (int i = 0; i < r->nresolve; i++) live += r->resolves[i].w != 0;
+    if (live >= ANI_MAX_RESOLVES || r->pool_bytes + resolve_bytes(w, h) > r->budget) return -1;
+    int slot = -1;
+    for (int i = 0; i < r->nresolve && slot < 0; i++)
+        if (r->resolves[i].w == 0) slot = i;
+    if (slot < 0) {
+        if (!grow((void **)&r->resolves, &r->resolve_cap, r->nresolve + 1, sizeof(ani_rt_resolve))) return -1;
+        slot = r->nresolve++;
+    }
+    ani_rt_resolve *rs = &r->resolves[slot];
+    *rs = (ani_rt_resolve){ 0 };
+    sg_image img = sg_make_image(&(sg_image_desc){ .usage.resolve_attachment = true, .width = w, .height = h,
+                                                   .pixel_format = LAYER_COLOR_FMT, .sample_count = 1,
+                                                   .label = "anown-layer-resolve" });
+    if (sg_query_image_state(img) != SG_RESOURCESTATE_VALID) {
+        sg_destroy_image(img);
+        return -1;
+    }
+    sg_view rv = sg_make_view(&(sg_view_desc){ .resolve_attachment.image = img });
+    sg_view tv = sg_make_view(&(sg_view_desc){ .texture.image = img });
+    if (sg_query_view_state(rv) != SG_RESOURCESTATE_VALID || sg_query_view_state(tv) != SG_RESOURCESTATE_VALID) {
+        sg_destroy_view(rv);
+        sg_destroy_view(tv);
+        sg_destroy_image(img);
+        return -1;
+    }
+    *rs = (ani_rt_resolve){ .w = w, .h = h, .in_use = true, .img = img, .resolve_view = rv, .tex_view = tv };
     r->pool_bytes += resolve_bytes(w, h);
-    return r->nresolve++;
+    return slot;
 }
 
 // ---- drawing a target's command list ----------------------------------------------------
@@ -575,6 +650,7 @@ bool ani_renderer_prepare(ani_renderer *r, const an_scene *s, int64_t frame, int
     r->layers_rendered = r->layers_fallback = 0;
     if (!grow((void **)&r->rects, &r->rect_cap, m->nlayers ? m->nlayers : 1, sizeof(ani_layer_rect))) return false;
     for (int i = 0; i < r->nresolve; i++) r->resolves[i].in_use = false;
+    for (int i = 0; i < r->nscratch; i++) r->scratches[i].in_use = false;
     layer_bounds(r);
     for (int li = 0; li < m->nlayers; li++) {
         ani_layer_rect *lr = &r->rects[li];
