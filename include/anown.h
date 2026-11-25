@@ -147,6 +147,9 @@ typedef enum an_kind {
     AN_KIND_ARRAY, /* an array / bar visualizer (an_array): a group of elements */
     AN_KIND_CALLOUT, /* a label and an arrow (an_callout, an_array_pointer): a group */
     AN_KIND_POLYGON, /* a filled polygon (an_polygon) */
+    AN_KIND_NODE,    /* a graph node (an_node): a group of a shape and a label */
+    AN_KIND_EDGE,    /* a graph edge (an_edge): endpoints resolved from its nodes each frame */
+    AN_KIND_AXES,    /* axes (an_axes): a group of axis lines, ticks and labels */
 } an_kind;
 
 typedef struct an_obj an_obj;
@@ -506,7 +509,8 @@ typedef struct an_verb_opts {
 /* What an an_anim records when played: one track (NONE), or several (the verbs,
  * and an_array_swap). */
 typedef enum an_verb_kind { AN_VERB_NONE = 0, AN_VERB_SLAP, AN_VERB_POP, AN_VERB_SQUASH, AN_VERB_SWAP,
-                            AN_VERB_CODE_GOTO, AN_VERB_CELL_STATE } an_verb_kind;
+                            AN_VERB_CODE_GOTO, AN_VERB_CELL_STATE, AN_VERB_NODE_STATE, AN_VERB_EDGE_STATE,
+                            AN_VERB_PATH } an_verb_kind;
 
 typedef struct an_anim {
     an_obj *obj;
@@ -521,7 +525,10 @@ typedef struct an_anim {
     an_verb_opts verb_opts;
     float arc_height;      /* an_move_arc: the arc's height (0: a straight track) */
     bool arc;
-    int swap_i, swap_j;    /* an_array_swap: the slots; an_code_goto: the line in swap_i */
+    int swap_i, swap_j;    /* an_array_swap: the slots; an_code_goto: the line in swap_i;
+                              state verbs: the state in swap_j; an_highlight_path: count in swap_i */
+    an_obj **objs;         /* an_highlight_path: the objects (a copy in the scene) */
+    float gap;             /* an_highlight_path: seconds between objects */
 } an_anim;
 
 an_anim an_move_to(an_obj *o, an_vec2 to, const an_anim_opts *opts);
@@ -694,6 +701,48 @@ typedef struct an_handle {
     an_scene *scene;
     double start, end;
 } an_handle;
+
+/* ---- graphs (docs/graphs.md) ------------------------------------------- */
+
+typedef enum an_node_shape { AN_NODE_CIRCLE = 0, AN_NODE_ROUNDED } an_node_shape;
+
+/* A node: a group of a shape (circle or rounded rect) and a centered label.
+ * Edges clip at its shape. A patterned node gets paper_under by default, so
+ * edges behind it don't show through the gaps. */
+typedef struct an_node_opts {
+    AN_OBJ_FIELDS          /* fill (alpha 0: palette accent a), stroke / stroke_width
+                              (default ink, 5), pattern, paper_under: the shape's */
+    an_node_shape shape;
+    float radius;          /* circle; default 40 */
+    an_vec2 size;          /* rounded rect; default {120, 70}; corners 0.25 x the shorter side */
+    const char *label;
+    an_font *font;         /* NULL: an_font_mono */
+    an_color state_colors[4]; /* as for arrays (an_cell_state) */
+} an_node_opts;
+an_obj *an_node(an_scene *s, const an_node_opts *opts);
+/* An edge between two nodes (any objects that aren't edges or inside one). Its
+ * geometry is resolved every frame from the nodes' state at that frame: it runs
+ * between their outlines (circle radius, or the box of rects and rounded nodes),
+ * `gap` short of each. Its own pos, scale and rotation aren't used. Directed
+ * edges end in a filled arrowhead (an_polygon). Rejected (NULL, with a message)
+ * if an endpoint is an edge or inside one: no cycles. */
+typedef struct an_edge_opts {
+    AN_OBJ_FIELDS          /* stroke / stroke_width: the line (default ink, 5) */
+    an_obj *from, *to;
+    bool directed;
+    float bend;            /* -1..1: curvature (0 straight); positive bulges up the screen */
+    float gap;             /* default 6 */
+} an_edge_opts;
+an_obj *an_edge(an_scene *s, const an_edge_opts *opts);
+
+/* Node and edge states: the array's four (an_cell_state). An edge's state sets
+ * its stroke color (and width: 1.5x for ACTIVE and DONE). Default 0.3 s. */
+an_anim an_node_set_state(an_obj *node, an_cell_state state, const an_anim_opts *opts);
+an_anim an_edge_set_state(an_obj *edge, an_cell_state state, const an_anim_opts *opts);
+an_cell_state an_node_state_at_cursor(const an_obj *node);
+/* Set every object (nodes and edges, in path order) to `state`, `gap` seconds
+ * apart: one anim. The list is copied. */
+an_anim an_highlight_path(an_obj *const *objs, int n, an_cell_state state, float gap, const an_anim_opts *opts);
 
 /* Start at the cursor and move the cursor to the animation's end. */
 an_handle an_play(an_scene *s, an_anim a);

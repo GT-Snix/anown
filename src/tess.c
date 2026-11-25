@@ -12,6 +12,7 @@ static void memo_free(struct ani_memo *mm);
 
 void ani_mesh_init(ani_mesh *m) {
     *m = (ani_mesh){ 0 };
+    ani_arena_init(&m->frame_arena, 0);
 }
 
 void ani_mesh_free(ani_mesh *m) {
@@ -28,6 +29,7 @@ void ani_mesh_free(ani_mesh *m) {
     free(m->pts_b.s);
     free(m->glyphs);
     memo_free(m->memo);
+    ani_arena_release(&m->frame_arena);
     *m = (ani_mesh){ 0 };
 }
 
@@ -998,12 +1000,15 @@ static bool emit_obj_cb(ani_mesh *m, void *ctx, int target) {
     return emit(m, c->o, c->w, c->st, target);
 }
 
-static bool emit_memo(ani_mesh *m, const an_scene *s, const an_obj *o, ani_affine w, const emit_style *st, int target) {
+// extra / nextra: more key bytes (an edge's resolved geometry)
+static bool emit_memo(ani_mesh *m, const an_scene *s, const an_obj *o, ani_affine w, const emit_style *st, int target,
+                      const void *extra, size_t nextra) {
     obj_ctx ctx = { o, w, st };
     if (!m->memo_off) {
         struct ani_memo *mm = m->memo;
         mm->kb_len = 0;
         if (!KB(o->id) || !KB(w) || !key_style(mm, st)) return false;
+        if (extra && !kb_put(mm, extra, nextra)) return false;
     }
     return memo_run(m, s->serial, o->id, 0, target, emit_obj_cb, &ctx);
 }
@@ -1170,7 +1175,8 @@ static bool visit_children(ani_mesh *m, const an_scene *s, const an_obj *parent,
         }
         emit_style st = { 0 };
         const bool drawable = c->kind != AN_KIND_GROUP && c->kind != AN_KIND_TEXT && c->kind != AN_KIND_CODE &&
-                              c->kind != AN_KIND_ARRAY && c->kind != AN_KIND_CALLOUT;
+                              c->kind != AN_KIND_ARRAY && c->kind != AN_KIND_CALLOUT && c->kind != AN_KIND_NODE &&
+                              c->kind != AN_KIND_AXES && c->kind != AN_KIND_EDGE;
         if (drawable) st = sample_style(s, c, chaos, at);
         // Isolate when the node fades as a unit, or (outside any layer) when a
         // translucent paint needs stencil coverage. docs/layers.md
@@ -1186,7 +1192,38 @@ static bool visit_children(ani_mesh *m, const an_scene *s, const an_obj *parent,
             t = layer_new(m, target, opacity, c);
             if (t < 0) return false;
         }
-        if (drawable && !emit_memo(m, s, c, w, &st, t)) return false;
+        if (c->kind == AN_KIND_EDGE) {
+            // resolved from its nodes at this frame (docs/graphs.md): the path lives
+            // in the frame arena, in the parent's space (so it's drawn with pw)
+            an_vec2 g[4];
+            if (!ani_edge_resolve(c, at, &g[0], &g[1], &g[2], &g[3])) continue;
+            const an_vec2 se = c->u.edge.directed ? (an_vec2){ g[1].x - g[3].x * 10.0f, g[1].y - g[3].y * 10.0f } : g[1];
+            ani_path_builder b;
+            ani_pb_init(&b);
+            bool ok = ani_pb_move(&b, g[0]);
+            const bool bent = g[2].x != (g[0].x + g[1].x) * 0.5f || g[2].y != (g[0].y + g[1].y) * 0.5f;
+            ok = ok && (bent ? ani_pb_quad(&b, g[2], se, s->flatness) : ani_pb_line(&b, se));
+            ani_path *path = ok ? ani_pb_finish(&b, &m->frame_arena) : NULL;
+            ani_pb_free(&b);
+            if (!path) return false;
+            an_obj tmp = *c;
+            tmp.kind = AN_KIND_STROKE;
+            tmp.path = path;
+            tmp.has_stroke = true;
+            emit_style est = sample_style(s, c, chaos, at);
+            const bool tr = has_ink(&tmp, &est) && est.stroke.a < 1.0f;
+            int t = target;
+            if (m->force_isolate || opacity < 1.0f || (tr && target == ANI_TARGET_MAIN)) {
+                t = layer_new(m, target, opacity, c);
+                if (t < 0) return false;
+            }
+            if (!emit_memo(m, s, &tmp, pw, &est, t, g, sizeof g)) return false;
+            // the head (and any children) ride on the tip: translate to it, rotate to the end tangent
+            const ani_affine tipf = ani_affine_mul(pw, (ani_affine){ g[3].x, g[3].y, -g[3].y, g[3].x, g[1].x, g[1].y });
+            if (c->first_child && !visit_children(m, s, c, tipf, t, chaos, rest, at)) return false;
+            continue;
+        }
+        if (drawable && !emit_memo(m, s, c, w, &st, t, NULL, 0)) return false;
         if (c->first_child && !visit_children(m, s, c, w, t, chaos, rest, at)) return false;
     }
     if (!flush_glyphs(m, s, gbase, target)) return false;
@@ -1228,6 +1265,7 @@ bool ani_tess_scene(ani_mesh *m, const an_scene *s, int64_t frame) {
                                         (an_vec2){ cam.zoom, cam.zoom }, -cam.rot),
                               (ani_affine){ 1, 0, 0, 1, -cam.pos.x, -cam.pos.y });
     }
+    ani_arena_reset(&m->frame_arena);
     m->memo_hits = m->memo_misses = 0;
     if (!m->memo_off && !m->memo) {
         m->memo = calloc(1, sizeof *m->memo);

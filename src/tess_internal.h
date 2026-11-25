@@ -4,6 +4,7 @@
 #define ANOWN_TESS_INTERNAL_H
 
 #include "scene_internal.h"
+#include "arena_internal.h"
 
 typedef struct ani_vertex {
     float x, y;       // scene pixels
@@ -115,6 +116,9 @@ typedef struct ani_mesh {
     // singular value of its world transform), for the max_zoom warning
     float max_screen_scale;
     int snapped_letters;    // letters snapped to whole pixels this frame (tests)
+    // per-frame scratch for geometry resolved while tessellating (edges); reset
+    // every frame, never part of any object
+    ani_arena frame_arena;
     struct ani_memo *memo;
     bool memo_off;          // tessellate everything every frame (tests, benchmarks)
     size_t memo_budget;     // bytes of cached vertices and commands; 0: ANI_MEMO_BUDGET
@@ -154,6 +158,11 @@ ani_affine ani_obj_world(const an_obj *o);
 // spacing, coarsened by powers of two below 6 px on screen (docs/camera.md).
 typedef struct ani_time ani_time;
 float ani_boil_spacing(const an_scene *s, an_obj *c, ani_time at);
+
+// graph.c: an edge's resolved geometry at a time, in its parent's space: start,
+// end (each `gap` off its node's outline), the bend control point and the unit
+// direction at the end. False if an endpoint doesn't exist yet.
+bool ani_edge_resolve(const an_obj *e, ani_time at, an_vec2 *p0, an_vec2 *p1, an_vec2 *ctrl, an_vec2 *dir);
 
 // Append one triangle. Skips triangles with near-zero area or non-finite
 // coordinates (so the mesh never contains either). False on allocation failure.

@@ -85,6 +85,9 @@ int64_t ani_record_anim(an_scene *s, const an_anim *a, int64_t start);
 // array.c: the tracks of an_array_swap (docs/explainer.md).
 int64_t ani_array_record_swap(an_scene *s, const an_anim *a, int64_t start);
 int64_t ani_array_record_state(an_scene *s, const an_anim *a, int64_t start);
+// graph.c: node / edge states and path highlights.
+int64_t ani_graph_record_state(an_scene *s, const an_anim *a, int64_t start);
+int64_t ani_graph_record_path(an_scene *s, const an_anim *a, int64_t start);
 // text.c: an_code_goto's tracks.
 int64_t ani_code_record_goto(an_scene *s, const an_anim *a, int64_t start);
 // An object's world transform at a time (without the camera), from the top down.

@@ -83,7 +83,9 @@ Out of scope for v1: LaTeX, 3D, audio, a GUI editor, and scripting-language bind
 10. **Strokes.** Every outline (rect, circle, line, arrow, free strokes) goes
     through `ani_stroke_emit` (`src/stroke.c`); never add a second outline path.
     Paths are flattened at object creation; rendering, the nozzle and sampling
-    never write to objects. `tests/test_stroke.c` checks the stress set for
+    never write to objects. One exception: graph edges (`an_edge`) build their
+    path each frame from their nodes' sampled state, in the mesh's frame arena,
+    never on the object (docs/graphs.md). `tests/test_stroke.c` checks the stress set for
     NaNs, degenerate triangles, widths, spikes and gaps; after changing the
     triangulator, also look at `./build/examples/04_stroke_stress out.png`.
     See docs/strokes.md.

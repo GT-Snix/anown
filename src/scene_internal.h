@@ -101,6 +101,27 @@ struct an_obj {
         struct {
             an_obj *label, *arrow, *head; // head: a filled triangle (an_polygon)
         } callout;
+        // AN_KIND_NODE (docs/graphs.md)
+        struct {
+            an_obj *shape, *label;
+            an_node_shape kind;
+            float radius;
+            an_vec2 size;
+            an_color states[4];
+        } node;
+        // AN_KIND_EDGE (docs/graphs.md)
+        struct {
+            an_obj *from, *to, *head;
+            bool directed;
+            float bend, gap;
+            float width;            // the base stroke width (states scale it)
+            an_color states[4];
+        } edge;
+        // AN_KIND_AXES (docs/graphs.md)
+        struct {
+            an_vec2 size;
+            float x_min, x_max, y_min, y_max;
+        } axes;
         // AN_KIND_ARRAY (docs/explainer.md)
         struct {
             int n;
@@ -168,6 +189,9 @@ an_obj *ani_obj_make(an_scene *s, an_kind kind, const ani_common_opts *c);
 // Key a library helper's internal part by a fixed name (and index) under its
 // parent, instead of its child index (docs/explainer.md, "Keys").
 void ani_obj_part(an_obj *o, const char *part, int index);
+// Give a just-made object its path (and whether to outline it); the verb pivot
+// goes to the path's box center (except rects and circles).
+an_obj *ani_obj_with_path(an_obj *o, ani_path *path, bool stroked);
 // Rect, circle and glyph outlines are opt-in: drawn when a stroke color or width is given.
 bool ani_outline_requested(an_color stroke, float width);
 

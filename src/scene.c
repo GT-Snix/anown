@@ -87,6 +87,12 @@ bool an_obj_set_parent(an_obj *o, an_obj *parent) {
     if (!p) return false;
     for (an_obj *a = p; a; a = a->parent) {
         if (a == o) return false; // p is o or a descendant of o
+        // an edge's endpoints can't depend on it (docs/graphs.md): no node of an
+        // edge (or anything holding one) goes under that edge
+        if (a->kind == AN_KIND_EDGE) {
+            for (const an_obj *e = a->u.edge.from; e; e = e->parent) if (e == o) return false;
+            for (const an_obj *e = a->u.edge.to; e; e = e->parent) if (e == o) return false;
+        }
     }
     detach(o);
     append_child(p, o);
@@ -163,7 +169,7 @@ bool ani_outline_requested(an_color stroke, float width) {
     return stroke.a > 0.0f || width > 0.0f;
 }
 
-static an_obj *with_path(an_obj *o, ani_path *path, bool stroked) {
+an_obj *ani_obj_with_path(an_obj *o, ani_path *path, bool stroked) {
     if (o) {
         o->path = path;
         o->has_stroke = stroked;
@@ -192,7 +198,7 @@ an_obj *an_rect(an_scene *s, const an_rect_opts *opts) {
     const an_vec2 size = (o.size.x > 0 || o.size.y > 0) ? o.size : (an_vec2){ 100, 100 };
     ani_path *path = ani_path_rect(&s->arena, size);
     if (!path) return NULL;
-    an_obj *r = with_path(ani_obj_make(s, AN_KIND_RECT, ANI_COMMON(&o)), path, ani_outline_requested(o.stroke, o.stroke_width));
+    an_obj *r = ani_obj_with_path(ani_obj_make(s, AN_KIND_RECT, ANI_COMMON(&o)), path, ani_outline_requested(o.stroke, o.stroke_width));
     if (r) r->u.rect.size = size;
     return r;
 }
@@ -203,7 +209,7 @@ an_obj *an_circle(an_scene *s, const an_circle_opts *opts) {
     const float radius = o.radius > 0 ? o.radius : 50.0f;
     ani_path *path = ani_path_circle(&s->arena, radius, s->flatness);
     if (!path) return NULL;
-    an_obj *c = with_path(ani_obj_make(s, AN_KIND_CIRCLE, ANI_COMMON(&o)), path, ani_outline_requested(o.stroke, o.stroke_width));
+    an_obj *c = ani_obj_with_path(ani_obj_make(s, AN_KIND_CIRCLE, ANI_COMMON(&o)), path, ani_outline_requested(o.stroke, o.stroke_width));
     if (c) c->u.circle.radius = radius;
     return c;
 }
@@ -213,7 +219,7 @@ an_obj *an_line(an_scene *s, const an_line_opts *opts) {
     if (!s) return NULL;
     ani_path *path = ani_path_line(&s->arena, o.from, o.to);
     if (!path) return NULL;
-    an_obj *l = with_path(ani_obj_make(s, AN_KIND_LINE, ANI_COMMON(&o)), path, true);
+    an_obj *l = ani_obj_with_path(ani_obj_make(s, AN_KIND_LINE, ANI_COMMON(&o)), path, true);
     if (l) {
         l->u.line.from = o.from;
         l->u.line.to = o.to;
@@ -229,7 +235,7 @@ an_obj *an_arrow(an_scene *s, const an_arrow_opts *opts) {
     if (head < 16.0f && !(o.head > 0.0f)) head = 16.0f;
     ani_path *path = ani_path_arrow(&s->arena, o.from, o.to, head);
     if (!path) return NULL;
-    an_obj *a = with_path(ani_obj_make(s, AN_KIND_ARROW, ANI_COMMON(&o)), path, true);
+    an_obj *a = ani_obj_with_path(ani_obj_make(s, AN_KIND_ARROW, ANI_COMMON(&o)), path, true);
     if (a) {
         a->u.line.from = o.from;
         a->u.line.to = o.to;
@@ -242,7 +248,7 @@ an_obj *an_stroke(an_scene *s, const an_stroke_opts *opts) {
     if (!s) return NULL;
     ani_path *path = ani_path_segs(&s->arena, o.segs, o.segs ? o.seg_count : 0, s->flatness);
     if (!path) return NULL;
-    return with_path(ani_obj_make(s, AN_KIND_STROKE, ANI_COMMON(&o)), path, true);
+    return ani_obj_with_path(ani_obj_make(s, AN_KIND_STROKE, ANI_COMMON(&o)), path, true);
 }
 
 an_obj *an_group(an_scene *s, const an_group_opts *opts) {
@@ -274,7 +280,7 @@ an_obj *an_polygon(an_scene *s, const an_polygon_opts *opts) {
     ani_pb_free(&b);
     if (!path) return NULL;
     // with_path also puts the verb pivot at the center of the points' box
-    return with_path(ani_obj_make(s, AN_KIND_POLYGON, ANI_COMMON(&o)), path, ani_outline_requested(o.stroke, o.stroke_width));
+    return ani_obj_with_path(ani_obj_make(s, AN_KIND_POLYGON, ANI_COMMON(&o)), path, ani_outline_requested(o.stroke, o.stroke_width));
 }
 
 void ani_obj_part(an_obj *o, const char *part, int index) {
