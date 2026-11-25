@@ -642,3 +642,53 @@ re-encode on upload (YouTube etc.) will strip the grain at their own bitrates
 regardless, so upload the master or a CRF 18 share file.
 
 `out/bitrate/` holds 3.5 GB (the source PNGs are most of it; gitignored).
+
+## Memoized tessellation (2026-11-25)
+
+Per-object (and per letter batch) cache of emitted vertices and commands,
+keyed by everything the emission reads; docs/layers.md "Memoized
+tessellation" has the design. Gate (`tests/test_memo.c`): with the cache on,
+meshes and pixels equal the cache-off render frame by frame in forward, reverse
+and shuffled order and under a 64 KB budget; leaving any of six key fields out
+fails it. Boil goldens unchanged; 60 reference PNGs byte-identical; all 17
+test programs pass.
+
+New bench scenario 6: everything drawn from the start, 25 of the 250 objects
+(every 10th) moving for the whole 6 s, boil on. 5 guarded runs each (3 refusals
+while Spotlight indexed the bitrate study's PNGs; `out/` now carries
+`.metadata_never_index`):
+
+| scenario | cache | median ms | p99 ms | frames > 12 ms | frames > 16.7 ms | tessellation avg | replayed |
+|---|---|---|---|---|---|---|---|
+| 0 (draw-on) | off | 7.77–8.13 | 12.63–13.47 | 37–72 | 0 | 4.01–4.04 | |
+| 0 (draw-on) | on | 5.47–5.60 | 12.76–13.46 | 14–21 | 0 | 2.23–2.38 | 59% |
+| 6 (10% moving) | off | 12.10–12.28 | 13.02–13.93 | 197–299 | 0–1 | 7.55–7.62 | |
+| 6 (10% moving) | on | 5.71–6.33 | 13.20–13.65 | 53–66 | 0 | 3.76–3.94 | 72% |
+
+What it does and doesn't fix:
+- **The median roughly halves; the p99 doesn't move.** The cache helps only
+  objects whose state is unchanged since the last frame. Boil re-rolls every
+  boiled object together at 12 Hz, so every 5th frame (at 60 fps) is a full
+  miss: those frames are the p99, and they now also pay for storing entries.
+  Scenario 6's 72% replay rate is that cadence (4 of 5 frames x 90% static).
+- Tessellation-only worst frames got worse (8.0 -> 9.0 ms in scenario 0, 10.8
+  -> 14.0 in 6): the full-miss frames copy their output into the cache. In full
+  frames this stays inside the p99 noise above.
+- The 12 ms ceiling is still missed at p99 in both scenarios.
+
+Proposal, not implemented: **parallel tessellation for the misses**, merged in
+traversal order so the output stays identical:
+1. Sequential pass (cheap: sampling only): walk the tree as now, decide each
+   object's target layer, its key, and whether it dirties the layer's stencil
+   (computable from its sampled style without emitting), so each object's
+   "layer already dirty" input is known up front. Hits are resolved here.
+2. Parallel pass: emit every miss into its own buffer (vertices + commands
+   relative to the object), on a fixed pool of worker threads, each with its own
+   stroke scratch. Emission is already a pure function of (object, key inputs).
+3. Sequential merge in traversal order: copy each object's buffer and relocate
+   its commands exactly as a cache hit is replayed today, then `merge_runs`.
+Output is the same bytes whatever the thread count or schedule, since step 3's
+order is fixed; test_memo's comparison extends to "1 thread vs N threads". On
+the M4's 4 performance + 6 efficiency cores, a full-miss frame's ~8 ms of
+tessellation would be expected around 2 ms, which would bring the p99 under
+12 ms (an estimate to be measured, not a result).

@@ -103,7 +103,16 @@ typedef struct ani_mesh {
     // letters waiting to be emitted as one batch (tess.c), reused across frames
     void *glyphs;
     int glyph_count, glyph_cap;
+    // Per-object tessellation cache (tess.c, docs/layers.md "Memoized
+    // tessellation"): an object's (or a text batch's) vertices and commands,
+    // keyed by everything they depend on. Never changes the output.
+    struct ani_memo *memo;
+    bool memo_off;          // tessellate everything every frame (tests, benchmarks)
+    size_t memo_budget;     // bytes of cached vertices and commands; 0: ANI_MEMO_BUDGET
+    int memo_hits, memo_misses; // the last frame
 } ani_mesh;
+
+#define ANI_MEMO_BUDGET ((size_t)128 * 1024 * 1024)
 
 void ani_mesh_init(ani_mesh *m);
 void ani_mesh_free(ani_mesh *m);

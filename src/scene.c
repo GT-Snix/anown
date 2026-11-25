@@ -28,6 +28,10 @@ an_scene *an_scene_create(const an_scene_desc *desc) {
     s->style = st;
     s->background = d.background.a > 0.0f ? d.background : st.palette->paper;
     s->rng = an_rng_make(s->seed, ANI_RNG_SCENE_KEY);
+    // identity for renderer caches (a later scene may reuse this address); it
+    // never affects what's drawn
+    static uint64_t next_serial = 0;
+    s->serial = ++next_serial;
     s->chaos = 1.0f; // the look is on by default (docs/layers.md)
     ani_arena_init(&s->arena, 0);
     s->root.kind = AN_KIND_GROUP;

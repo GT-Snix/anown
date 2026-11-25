@@ -8,6 +8,8 @@
 #include <string.h>
 
 
+static void memo_free(struct ani_memo *mm);
+
 void ani_mesh_init(ani_mesh *m) {
     *m = (ani_mesh){ 0 };
 }
@@ -25,6 +27,7 @@ void ani_mesh_free(ani_mesh *m) {
     free(m->pts_b.h);
     free(m->pts_b.s);
     free(m->glyphs);
+    memo_free(m->memo);
     *m = (ani_mesh){ 0 };
 }
 
@@ -769,6 +772,265 @@ fail:
     return false;
 }
 
+// ---- memoized tessellation ---------------------------------------------------------
+// An object's emitted vertices and commands depend only on: the object (its
+// immutable path, brush, pattern, flags: identified by scene serial + id), its
+// sampled world transform and style at the frame (colors, width, draw, riso,
+// shadow, chaos, boil incl. its 12 Hz step), whether it draws into a layer, and
+// whether that layer's stencil is already dirty. Those, serialized field by
+// field, are the key; a hit replays the stored vertices and commands. Every
+// object starts a fresh command run (with or without the cache), and
+// merge_runs() joins adjacent runs at the end of the frame, so the output is the
+// same either way. One entry per object; an entry is stored only when the
+// object didn't also miss the previous frame with another key (a continuously
+// moving object costs only the key compare). Bounded by memo_budget bytes;
+// entries not used this frame are evicted first.
+
+typedef struct memo_entry {
+    uint64_t serial;
+    uint32_t id;
+    uint8_t kind;             // 0: object, 1: letter batch (id: its first letter)
+    bool stored, missed_last;
+    unsigned char *key;
+    int key_len, key_cap;
+    ani_vertex *v;
+    int nv;
+    ani_cmd *cmds;            // first relative to the object's first vertex
+    int ncmds;
+    bool sets_layer_used, barrier_after;
+    int64_t stamp;            // last frame it was used
+} memo_entry;
+
+struct ani_memo {
+    memo_entry *e;
+    int n, cap;
+    int *table;               // open addressing, entry index + 1; 0 empty
+    int tcap;
+    unsigned char *kb;        // the key being built
+    int kb_len, kb_cap;
+    size_t bytes;
+    int64_t stamp;
+};
+
+static void memo_drop(struct ani_memo *mm, memo_entry *e) {
+    if (!e->stored) return;
+    mm->bytes -= (size_t)e->nv * sizeof(ani_vertex) + (size_t)e->ncmds * sizeof(ani_cmd);
+    free(e->v);
+    free(e->cmds);
+    e->v = NULL;
+    e->cmds = NULL;
+    e->nv = e->ncmds = 0;
+    e->stored = false;
+}
+
+static void memo_free(struct ani_memo *mm) {
+    if (!mm) return;
+    for (int i = 0; i < mm->n; i++) {
+        memo_drop(mm, &mm->e[i]);
+        free(mm->e[i].key);
+    }
+    free(mm->e);
+    free(mm->table);
+    free(mm->kb);
+    free(mm);
+}
+
+static bool kb_put(struct ani_memo *mm, const void *p, size_t n) {
+    if (!grow((void **)&mm->kb, &mm->kb_cap, mm->kb_len + (int)n, 1)) return false;
+    memcpy(mm->kb + mm->kb_len, p, n);
+    mm->kb_len += (int)n;
+    return true;
+}
+#define KB(x) kb_put(mm, &(x), sizeof(x))
+
+static uint64_t memo_hash(uint64_t serial, uint32_t id, uint8_t kind) {
+    uint64_t h = serial * 0x9E3779B97F4A7C15ull ^ ((uint64_t)id << 8 | kind);
+    h ^= h >> 31;
+    h *= 0xBF58476D1CE4E5B9ull;
+    return h ^ (h >> 29);
+}
+
+static memo_entry *memo_find(struct ani_memo *mm, uint64_t serial, uint32_t id, uint8_t kind) {
+    if ((mm->n + 1) * 2 > mm->tcap) { // keep the table at most half full
+        const int nc = mm->tcap ? mm->tcap * 2 : 1024;
+        int *t = calloc((size_t)nc, sizeof *t);
+        if (!t) return NULL;
+        for (int i = 0; i < mm->n; i++) {
+            size_t h = (size_t)memo_hash(mm->e[i].serial, mm->e[i].id, mm->e[i].kind) & (size_t)(nc - 1);
+            while (t[h]) h = (h + 1) & (size_t)(nc - 1);
+            t[h] = i + 1;
+        }
+        free(mm->table);
+        mm->table = t;
+        mm->tcap = nc;
+    }
+    size_t h = (size_t)memo_hash(serial, id, kind) & (size_t)(mm->tcap - 1);
+    while (mm->table[h]) {
+        memo_entry *e = &mm->e[mm->table[h] - 1];
+        if (e->serial == serial && e->id == id && e->kind == kind) return e;
+        h = (h + 1) & (size_t)(mm->tcap - 1);
+    }
+    if (!grow((void **)&mm->e, &mm->cap, mm->n + 1, sizeof(memo_entry))) return NULL;
+    mm->e[mm->n] = (memo_entry){ .serial = serial, .id = id, .kind = kind };
+    mm->table[h] = ++mm->n;
+    return &mm->e[mm->n - 1];
+}
+
+// Room for `need` more bytes: drop entries not used this frame
+// (one sweep, in entry order), until it fits. False if it still doesn't.
+static bool memo_room(struct ani_memo *mm, size_t need, size_t budget) {
+    for (int i = 0; i < mm->n && mm->bytes + need > budget; i++) {
+        if (mm->e[i].stored && mm->e[i].stamp < mm->stamp) memo_drop(mm, &mm->e[i]);
+    }
+    return mm->bytes + need <= budget;
+}
+
+typedef bool (*memo_fn)(ani_mesh *m, void *ctx, int target);
+
+// Run fn (which emits one object, or one letter batch, into target) through the
+// cache. The caller has built the object's part of the key in mm->kb.
+static bool memo_run(ani_mesh *m, uint64_t serial, uint32_t id, uint8_t kind, int target, memo_fn fn, void *ctx) {
+    m->merge_barrier = true; // an object never extends the previous object's run
+    if (m->memo_off) return fn(m, ctx, target);
+    struct ani_memo *mm = m->memo;
+    const bool main = target == ANI_TARGET_MAIN, dirty = !main && m->layer_used[target];
+    if (!KB(main) || !KB(dirty)) return false;
+    memo_entry *e = memo_find(mm, serial, id, kind);
+    if (!e) return false;
+    e->stamp = mm->stamp;
+    const bool same = e->key_len == mm->kb_len && memcmp(e->key, mm->kb, (size_t)mm->kb_len) == 0;
+    if (same && e->stored) { // replay
+        const int v0 = m->count;
+        if (!grow((void **)&m->v, &m->cap, m->count + e->nv, sizeof(ani_vertex)) ||
+            !grow((void **)&m->cmds, &m->cmd_cap, m->ncmds + e->ncmds, sizeof(ani_cmd)))
+            return false;
+        memcpy(m->v + v0, e->v, sizeof(ani_vertex) * (size_t)e->nv);
+        m->count += e->nv;
+        for (int i = 0; i < e->ncmds; i++) {
+            ani_cmd c = e->cmds[i];
+            c.first += v0;
+            c.target = target;
+            m->cmds[m->ncmds++] = c;
+        }
+        if (e->sets_layer_used) m->layer_used[target] = true;
+        m->merge_barrier = e->barrier_after;
+        e->missed_last = false;
+        m->memo_hits++;
+        return true;
+    }
+    m->memo_misses++;
+    const int v0 = m->count, c0 = m->ncmds;
+    if (!fn(m, ctx, target)) return false;
+    // store, unless this object also missed last frame with a different key
+    const bool store = !e->missed_last || same;
+    e->missed_last = true;
+    if (!same) {
+        if (!grow((void **)&e->key, &e->key_cap, mm->kb_len, 1)) return false;
+        memcpy(e->key, mm->kb, (size_t)mm->kb_len);
+        e->key_len = mm->kb_len;
+    }
+    memo_drop(mm, e);
+    const int nv = m->count - v0, nc = m->ncmds - c0;
+    const size_t bytes = (size_t)nv * sizeof(ani_vertex) + (size_t)nc * sizeof(ani_cmd);
+    const size_t budget = m->memo_budget ? m->memo_budget : ANI_MEMO_BUDGET;
+    if (!store || !memo_room(mm, bytes, budget)) return true;
+    e->v = malloc(sizeof(ani_vertex) * (size_t)(nv ? nv : 1));
+    e->cmds = malloc(sizeof(ani_cmd) * (size_t)(nc ? nc : 1));
+    if (!e->v || !e->cmds) {
+        free(e->v);
+        free(e->cmds);
+        e->v = NULL;
+        e->cmds = NULL;
+        return true; // not cached; the output is already emitted
+    }
+    memcpy(e->v, m->v + v0, sizeof(ani_vertex) * (size_t)nv);
+    for (int i = 0; i < nc; i++) {
+        e->cmds[i] = m->cmds[c0 + i];
+        e->cmds[i].first -= v0;
+    }
+    e->nv = nv;
+    e->ncmds = nc;
+    e->sets_layer_used = !main && !dirty && m->layer_used[target];
+    e->barrier_after = m->merge_barrier;
+    e->stored = true;
+    mm->bytes += bytes;
+    return true;
+}
+
+static bool key_style(struct ani_memo *mm, const emit_style *st) {
+    return KB(st->fill) && KB(st->stroke) && KB(st->stroke_width) && KB(st->draw) && KB(st->riso) &&
+           KB(st->shadow) && KB(st->shadow_offset) && KB(st->shadow_color) && KB(st->chaos) &&
+           KB(st->boil.amp) && KB(st->boil.spacing) && KB(st->boil.seed) && KB(st->boil.stream) &&
+           KB(st->boil.step) && KB(st->paper_under) && KB(st->paper);
+}
+
+typedef struct obj_ctx {
+    const an_obj *o;
+    ani_affine w;
+    const emit_style *st;
+} obj_ctx;
+
+static bool emit_obj_cb(ani_mesh *m, void *ctx, int target) {
+    const obj_ctx *c = ctx;
+    return emit(m, c->o, c->w, c->st, target);
+}
+
+static bool emit_memo(ani_mesh *m, const an_scene *s, const an_obj *o, ani_affine w, const emit_style *st, int target) {
+    obj_ctx ctx = { o, w, st };
+    if (!m->memo_off) {
+        struct ani_memo *mm = m->memo;
+        mm->kb_len = 0;
+        if (!KB(o->id) || !KB(w) || !key_style(mm, st)) return false;
+    }
+    return memo_run(m, s->serial, o->id, 0, target, emit_obj_cb, &ctx);
+}
+
+typedef struct glyphs_ctx {
+    glyph_item *gs;
+    int n;
+} glyphs_ctx;
+
+static bool emit_glyphs_cb(ani_mesh *m, void *ctx, int target) {
+    glyphs_ctx *c = ctx;
+    return emit_glyphs(m, c->gs, c->n, target);
+}
+
+static bool emit_glyphs_memo(ani_mesh *m, const an_scene *s, glyph_item *gs, int n, int target) {
+    if (n <= 0) return true;
+    glyphs_ctx ctx = { gs, n };
+    if (!m->memo_off) {
+        struct ani_memo *mm = m->memo;
+        mm->kb_len = 0;
+        if (!KB(n)) return false;
+        for (int i = 0; i < n; i++) {
+            const glyph_item *g = &gs[i];
+            if (!KB(g->o->id) || !KB(g->w) || !KB(g->pw) || !key_style(mm, &g->st) || !KB(g->fill_on) ||
+                !KB(g->ink_on) || !KB(g->soff))
+                return false;
+        }
+    }
+    return memo_run(m, s->serial, gs[0].o->id, 1, target, emit_glyphs_cb, &ctx);
+}
+
+// Join adjacent runs of the same target and paint over contiguous vertices.
+// Draws happen in list order either way, so this only saves draw calls.
+static void merge_runs(ani_mesh *m) {
+    int out = 0;
+    for (int i = 0; i < m->ncmds; i++) {
+        const ani_cmd c = m->cmds[i];
+        if (out > 0) {
+            ani_cmd *p = &m->cmds[out - 1];
+            if (c.kind == ANI_CMD_TRIS && p->kind == ANI_CMD_TRIS && p->target == c.target && p->paint == c.paint &&
+                p->first + p->count == c.first) {
+                p->count += c.count;
+                continue;
+            }
+        }
+        m->cmds[out++] = c;
+    }
+    m->ncmds = out;
+}
+
 // Does any letter of a text have a translucent paint at `at`? (Outside a layer
 // the whole text is then isolated: one layer, not one per letter.)
 static bool text_translucent(const an_scene *s, const an_obj *t, ani_time at) {
@@ -785,10 +1047,10 @@ static bool text_translucent(const an_scene *s, const an_obj *t, ani_time at) {
 }
 
 // Emit the pending batch of letters (m->glyphs[base..]) into target.
-static bool flush_glyphs(ani_mesh *m, int base, int target) {
+static bool flush_glyphs(ani_mesh *m, const an_scene *s, int base, int target) {
     const int n = m->glyph_count - base;
     m->glyph_count = base;
-    return n <= 0 || emit_glyphs(m, (glyph_item *)m->glyphs + base, n, target);
+    return n <= 0 || emit_glyphs_memo(m, s, (glyph_item *)m->glyphs + base, n, target);
 }
 
 // pchaos: effective chaos of the parent (scene dial x multipliers down the tree)
@@ -829,21 +1091,21 @@ static bool visit_children(ani_mesh *m, const an_scene *s, const an_obj *parent,
                             (g.st.shadow && g.st.shadow_color.a < 1.0f && (g.fill_on || g.ink_on));
             const bool isolate = m->force_isolate || opacity < 1.0f || (tr && target == ANI_TARGET_MAIN);
             if (isolate) {
-                if (!flush_glyphs(m, gbase, target)) return false;
+                if (!flush_glyphs(m, s, gbase, target)) return false;
                 const int t = layer_new(m, target, opacity, c);
-                if (t < 0 || !emit_glyphs(m, &g, 1, t)) return false;
+                if (t < 0 || !emit_glyphs_memo(m, s, &g, 1, t)) return false;
                 if (c->first_child && !visit_children(m, s, c, g.w, t, chaos, at)) return false;
                 continue;
             }
             if (!grow(&m->glyphs, &m->glyph_cap, m->glyph_count + 1, sizeof(glyph_item))) return false;
             ((glyph_item *)m->glyphs)[m->glyph_count++] = g;
             if (c->first_child) {
-                if (!flush_glyphs(m, gbase, target)) return false;
+                if (!flush_glyphs(m, s, gbase, target)) return false;
                 if (!visit_children(m, s, c, g.w, target, chaos, at)) return false;
             }
             continue;
         }
-        if (!flush_glyphs(m, gbase, target)) return false;
+        if (!flush_glyphs(m, s, gbase, target)) return false;
         emit_style st = { 0 };
         const bool drawable = c->kind != AN_KIND_GROUP && c->kind != AN_KIND_TEXT && c->kind != AN_KIND_CODE;
         if (drawable) st = sample_style(s, c, chaos, at);
@@ -861,10 +1123,10 @@ static bool visit_children(ani_mesh *m, const an_scene *s, const an_obj *parent,
             t = layer_new(m, target, opacity, c);
             if (t < 0) return false;
         }
-        if (drawable && !emit(m, c, w, &st, t)) return false;
+        if (drawable && !emit_memo(m, s, c, w, &st, t)) return false;
         if (c->first_child && !visit_children(m, s, c, w, t, chaos, at)) return false;
     }
-    if (!flush_glyphs(m, gbase, target)) return false;
+    if (!flush_glyphs(m, s, gbase, target)) return false;
     m->scratch_count = base;
     return true;
 }
@@ -886,7 +1148,15 @@ bool ani_tess_scene(ani_mesh *m, const an_scene *s, int64_t frame) {
     m->merge_barrier = true; // objects never extend the background run
     const ani_time at = ani_frame_time(s, frame);
     const float chaos = (float)ani_scene_chaos_at((an_scene *)s, at); // sampling only reads
-    return visit_children(m, s, &s->root, (ani_affine){ 1, 0, 0, 1, 0, 0 }, ANI_TARGET_MAIN, chaos, at);
+    m->memo_hits = m->memo_misses = 0;
+    if (!m->memo_off && !m->memo) {
+        m->memo = calloc(1, sizeof *m->memo);
+        if (!m->memo) return false;
+    }
+    if (m->memo) m->memo->stamp++;
+    if (!visit_children(m, s, &s->root, (ani_affine){ 1, 0, 0, 1, 0, 0 }, ANI_TARGET_MAIN, chaos, at)) return false;
+    merge_runs(m);
+    return true;
 }
 
 // ---- capacity estimate ---------------------------------------------------------------

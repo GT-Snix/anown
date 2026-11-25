@@ -122,6 +122,14 @@ Out of scope for v1: LaTeX, 3D, audio, a GUI editor, and scripting-language bind
     `scripts/ref-frames.sh` before and after (identical PNG bytes), plus a
     targeted check when the reference frames don't exercise the changed code.
 
+16. **Tessellation cache.** `src/tess.c` replays an object's vertices and
+    commands when its key (object identity + everything sampled that the
+    emission reads) repeats. Anything new that an emission reads must go into
+    the key (`emit_memo`, `emit_glyphs_memo`). `tests/test_memo.c` requires
+    identical meshes and pixels with the cache on and off in forward, reverse
+    and shuffled order and under eviction; keep it passing, and break a key
+    field on purpose when you change the key to see that it fails.
+
 ## Build
 
 - One `Makefile`, no CMake. `make` builds the library, the examples and the tests.

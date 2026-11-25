@@ -99,6 +99,7 @@ struct an_scene {
     ani_arena arena;
     an_obj root;     // hidden group; top-level objects are its children
     uint32_t count;  // objects created, not counting root
+    uint64_t serial; // unique per scene in the process: identity for render caches
     an_obj *named;   // head of the named-object list
     an_font *font_display, *font_mono; // built-in fonts, loaded on first use
 

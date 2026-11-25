@@ -777,3 +777,46 @@ after it, along the post-camera normal.
   pixels differing by more than 1 went from 1,426 to 0, so that "rim noise" was
   this bug.
 
+
+## Memoized tessellation (2026-11-25)
+
+`src/tess.c` keeps a cache in the mesh (renderer state, never scene state): per
+object, and per letter batch, the vertices and commands it emitted last time,
+under a key.
+
+- **The key** is everything the emission reads, serialized field by field:
+  - the scene serial and the object id, standing for the immutable path, brush,
+    pattern and flags;
+  - the sampled world transform;
+  - fill, stroke, stroke width, draw progress, riso offset, shadow on/off,
+    offset and color, effective chaos;
+  - the boil amplitude, spacing, seed, stream and 12 Hz step;
+  - `paper_under` and the paper color;
+  - whether it draws into a layer, and whether that layer's stencil is already
+    dirty (that decides a stencil clear);
+  - for letter batches, each letter's id, transforms, style, fill/outline
+    visibility and shadow offset.
+- **A hit** copies the stored vertices and commands in (commands relocated to
+  the current vertex offset and target).
+- **Same output either way.** Every object starts a fresh command run with or
+  without the cache, and `merge_runs` joins adjacent runs of the same target and
+  paint over contiguous vertices at the end of the frame (pixel-identical:
+  draws stay in order). The reference frames are byte-identical to the baseline,
+  and the boil goldens are unchanged.
+- **Storing:** an entry is stored unless the object also missed the previous
+  frame with a different key, so a continuously moving object costs a key
+  compare and no copy.
+- **Bounded** by `memo_budget` (default 128 MB of vertices and commands).
+  Entries not used in the current frame are evicted first; past the budget, a
+  miss simply isn't stored.
+- **Gate:** `tests/test_memo.c`.
+  - Meshes and pixels with the cache on equal the cache-off render, frame by
+    frame, in forward, reverse and shuffled order, and with a 64 KB budget.
+  - Scenes: shapes (boil, motion, draw-on, a color track, a chaos ramp, a
+    pattern, translucent paints in a shared layer, a blinking translucent
+    sibling, paper_under, a fading group), text (draw-on, a stagger, a
+    typewriter, a code block with a highlight, a fill track), and a rebuilt
+    scene with the same ids and other geometry.
+  - Leaving any one of these out of the key fails it: the boil step, the
+    transform, the dirty-layer flag, the scene serial (in both the hash and
+    the compare), a letter's fill visibility, the fill color.
