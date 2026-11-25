@@ -22,12 +22,15 @@ an_play(s, an_camera_move_to(s, (an_vec2){ 700, 400 }, &(an_anim_opts){ .duratio
 an_play(s, an_camera_zoom_to(s, 2.0f, NULL));
 an_play(s, an_camera_rotate_to(s, 0.05f, NULL));
 an_camera_set_pos(s, ...); an_camera_set_zoom(s, ...); an_camera_set_rotation(s, ...);
-an_camera_state cs = an_camera_get(s); // at the frame last passed to an_seek, shake included
+an_camera_state cs = an_camera_get(s); // at the frame last passed to an_seek: pos, zoom, rotation, shake
 ```
 
 **The view transform**, the root of every object's world transform:
 
-`view = translate(frame center) · rotate(−rotation) · scale(zoom) · translate(−(pos + shake))`
+`view = translate(frame center − shake) · rotate(−rotation) · scale(zoom) · translate(−pos)`
+
+The shake is in screen px, applied after zoom and rotation, so a shake of 10 px
+is 10 px on screen at any zoom.
 
 The paper background, its grain and its vignette are not under the camera:
 they're the print surface, fixed to the frame.

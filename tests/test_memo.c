@@ -92,6 +92,12 @@ static an_scene *scene_shapes(int variant) {
     an_play_async(s, an_fade_to(g, 0.5f, &(an_anim_opts){ .duration = 1.0f }));
     // the camera pans (a pure translation: the per-draw fast path)
     an_play_async(s, an_camera_move_to(s, (an_vec2){ 360, 150 }, &(an_anim_opts){ .duration = 1.6f }));
+    // and shakes twice (overlapping events), translation only: still the fast path
+    an_wait(s, 0.3f);
+    an_play_async(s, an_shake(s, 10.0f, &(an_anim_opts){ .duration = 0.6f }));
+    an_wait(s, 0.4f);
+    an_play_async(s, an_shake(s, 6.0f, &(an_anim_opts){ .duration = 0.5f }));
+    s->cursor = 0;
     an_wait(s, 2.0f);
     return s;
 }

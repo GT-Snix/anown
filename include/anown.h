@@ -428,6 +428,7 @@ typedef enum an_prop {
     AN_PROP_CAMERA_POS,      /* the world point at the frame's center; default the scene's center */
     AN_PROP_CAMERA_ZOOM,     /* screen px per world px; default 1; interpolated in log space */
     AN_PROP_CAMERA_ROTATION, /* radians; turning the camera clockwise turns the world counter-clockwise */
+    AN_PROP_CAMERA_SHAKE,    /* shake events (an_shake); not a sampled value */
     AN_PROP_COUNT
 } an_prop;
 
@@ -492,11 +493,18 @@ void an_camera_set_zoom(an_scene *s, float zoom);
 void an_camera_set_rotation(an_scene *s, float radians);
 
 typedef struct an_camera_state {
-    an_vec2 pos;    /* including any shake */
+    an_vec2 pos;    /* the world point at the frame's center (without shake) */
     float zoom, rotation;
+    an_vec2 shake;  /* the shake's offset, screen px: exactly {0, 0} at rest */
 } an_camera_state;
 /* The camera at the frame last passed to an_seek. */
 an_camera_state an_camera_get(const an_scene *s);
+
+/* A camera shake starting when played: translation only, intensity in screen
+ * px at full trauma, decaying as trauma^2 (trauma 1 -> 0 linearly over the
+ * duration; default 0.5 s), smooth 15 Hz noise. A pure function of the frame;
+ * the camera is exactly at rest from the end of the decay (docs/camera.md). */
+an_anim an_shake(an_scene *s, float intensity, const an_anim_opts *opts);
 
 /* Start at the cursor and move the cursor to the animation's end. */
 void an_play(an_scene *s, an_anim a);

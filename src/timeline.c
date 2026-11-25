@@ -24,6 +24,7 @@ static const ani_prop_info g_props[AN_PROP_COUNT] = {
     [AN_PROP_CAMERA_POS] = { 2, ANI_SPACE_LINEAR, 0.01 },
     [AN_PROP_CAMERA_ZOOM] = { 1, ANI_SPACE_LOG, 1e-4 },
     [AN_PROP_CAMERA_ROTATION] = { 1, ANI_SPACE_LINEAR, 1e-4 },
+    [AN_PROP_CAMERA_SHAKE] = { 1, ANI_SPACE_STEP, 0.0 }, // events, see an_shake
 };
 
 #define SETTLE_RELATIVE 1e-3 // spring tolerance relative to travel distance
@@ -47,7 +48,8 @@ static an_color to_color(ani_value v) {
 
 bool ani_prop_valid(ani_target_kind kind, an_prop p) {
     if (p < 0 || p >= AN_PROP_COUNT) return false;
-    const bool camera = p == AN_PROP_CAMERA_POS || p == AN_PROP_CAMERA_ZOOM || p == AN_PROP_CAMERA_ROTATION;
+    const bool camera = p == AN_PROP_CAMERA_POS || p == AN_PROP_CAMERA_ZOOM || p == AN_PROP_CAMERA_ROTATION ||
+                        p == AN_PROP_CAMERA_SHAKE;
     if (kind == ANI_TARGET_SCENE) return p == AN_PROP_CHAOS || camera;
     return !camera;
 }
@@ -418,6 +420,59 @@ an_anim an_draw(an_obj *o, const an_anim_opts *op) {
     return a;
 }
 
+// ---- camera shake (docs/camera.md) ---------------------------------------------------
+
+typedef struct ani_shake {
+    int64_t start, duration; // ticks
+    float intensity;         // screen px at full trauma
+} ani_shake;
+
+static int64_t record_shake(an_scene *s, int64_t start, float seconds, float intensity) {
+    const int64_t duration = ani_ticks(seconds);
+    if (duration <= 0 || !(intensity > 0.0f)) return start;
+    if (s->nshakes == s->shake_cap) {
+        const int cap = s->shake_cap ? s->shake_cap * 2 : 8;
+        ani_shake *n = ani_arena_alloc(&s->arena, sizeof *n * (size_t)cap, _Alignof(ani_shake));
+        if (!n) return start;
+        if (s->nshakes) memcpy(n, s->shakes, sizeof *n * (size_t)s->nshakes);
+        s->shakes = n;
+        s->shake_cap = cap;
+    }
+    s->shakes[s->nshakes++] = (ani_shake){ .start = start, .duration = duration, .intensity = intensity };
+    if (start + duration > s->end) s->end = start + duration;
+    return start + duration;
+}
+
+an_anim an_shake(an_scene *s, float intensity, const an_anim_opts *op) {
+    an_anim a = anim(NULL, AN_PROP_CAMERA_SHAKE, false, intensity, 0, 0, 0, op);
+    a.scene = s;
+    return a;
+}
+
+// Smooth value noise for event e, channel c, at k samples since its trigger.
+static double shake_noise(uint64_t seed, int e, int c, double k) {
+    const double i = floor(k), f = k - i, w = f * f * (3.0 - 2.0 * f);
+    const uint64_t stream = 0x5EA4E000ull + 2ull * (uint64_t)e + (uint64_t)c;
+    const double h0 = an_hash_float(seed, stream, (uint64_t)i), h1 = an_hash_float(seed, stream, (uint64_t)i + 1);
+    return (h0 + (h1 - h0) * w) * 2.0 - 1.0;
+}
+
+an_vec2 ani_shake_at(const an_scene *s, ani_time at) {
+    double x = 0.0, y = 0.0;
+    for (int e = 0; e < s->nshakes; e++) {
+        const ani_shake *sh = &s->shakes[e];
+        // exact: elapsed and duration in units of 1 / (den x 1e6) s
+        const int64_t el = at.num * ANI_TICKS_PER_SEC - sh->start * at.den, dur = sh->duration * at.den;
+        if (el < 0 || el >= dur) continue; // outside the event: exactly nothing
+        const double u = (double)el / (double)dur, trauma = 1.0 - u;
+        const double amp = (double)sh->intensity * trauma * trauma; // trauma exponent 2
+        const double k = (double)el / ((double)at.den * (double)ANI_TICKS_PER_SEC) * 15.0; // 15 Hz
+        x += amp * shake_noise(s->seed, e, 0, k);
+        y += amp * shake_noise(s->seed, e, 1, k);
+    }
+    return (an_vec2){ (float)x, (float)y };
+}
+
 // Record `a` starting at `start`; returns its end (or start if it can't run).
 static int64_t record_anim(an_scene *s, const an_anim *a, int64_t start) {
     if (!s) return start;
@@ -435,6 +490,7 @@ static int64_t record_anim(an_scene *s, const an_anim *a, int64_t start) {
         return start;
     }
     if (!ani_prop_valid(ref.kind, a->prop)) return start;
+    if (a->prop == AN_PROP_CAMERA_SHAKE) return record_shake(s, start, a->opts.duration > 0.0f ? a->opts.duration : 0.5f, a->value[0]);
     const bool spring = a->opts.ease.kind == AN_EASE_KIND_SPRING;
     int64_t duration = ani_ticks(a->opts.duration);
     if (duration == 0) duration = spring ? -1 : ANI_TICKS_PER_SEC;
@@ -556,6 +612,7 @@ ani_camera ani_camera_at(an_scene *s, ani_time at) {
         .zoom = (float)ani_sample(ani_scene_prop(s, AN_PROP_CAMERA_ZOOM), at).v[0],
         .rot = (float)ani_sample(ani_scene_prop(s, AN_PROP_CAMERA_ROTATION), at).v[0],
     };
+    if (s->nshakes) c.shake = ani_shake_at(s, at); // only then: no float work at all without shakes
     return c;
 }
 
@@ -572,7 +629,7 @@ double ani_obj_area_scale_at(an_obj *o, ani_time at) {
 an_camera_state an_camera_get(const an_scene *s) {
     if (!s) return (an_camera_state){ 0 };
     const ani_camera c = ani_camera_at((an_scene *)s, ani_frame_time(s, s->frame)); // sampling reads only
-    return (an_camera_state){ .pos = c.pos, .zoom = c.zoom, .rotation = c.rot };
+    return (an_camera_state){ .pos = c.pos, .zoom = c.zoom, .rotation = c.rot, .shake = c.shake };
 }
 
 double ani_scene_chaos_at(an_scene *s, ani_time at) {

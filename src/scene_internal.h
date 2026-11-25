@@ -96,6 +96,8 @@ struct an_scene {
     float chaos;     // BASE chaos dial (scene target), default 1
     an_vec2 cam_pos; // BASE camera (docs/camera.md): position, zoom, rotation
     float cam_zoom, cam_rot;
+    struct ani_shake *shakes; // camera shake events in recording order (arena)
+    int nshakes, shake_cap;
     float max_zoom;  // curves are flattened for this scale on screen
     float flatness;  // path flattening tolerance, local px: 0.2 / max_zoom
     an_style style;  // resolved: defaults applied (docs/layers.md)

@@ -752,3 +752,18 @@ Tests: `tests/test_camera.c` (zoom vs riso offset in pixels, max_zoom,
 zooming into code text: no shadow, snapping off once and back, chaos 0.81 at
 3x; boil coarsening at 1, 0.4, 0.3, 0.1 and only at step frames); test_memo's
 scenes pan and zoom. 18 test programs pass; 60 reference PNGs byte-identical.
+
+## Camera, step 2: shake (2026-11-25)
+
+`an_shake(s, intensity, opts)` (an `an_anim` on the scene; default 0.5 s):
+translation only, in screen px after zoom and rotation; trauma 1 -> 0 linearly,
+amplitude intensity x trauma^2, smooth (smoothstep) value noise at 15 Hz from
+`an_hash` (seed, event index, sample). A pure function of the frame; outside an
+event's window nothing is computed, so the camera is exactly at rest.
+`an_camera_get` reports the shake separately from the base position. Shakes
+stay on the translation fast path.
+Tests (test_camera): offsets bit-identical in forward, reverse and shuffled
+order; exactly {0, 0} before the trigger and from the end of the decay on;
+frame 21 recomputed by hand from the formula; the rest frame byte-identical to
+frame 0. test_memo's shapes scene shakes twice (overlapping) while panning:
+cache on == off in all orders.

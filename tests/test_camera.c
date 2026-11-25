@@ -162,6 +162,63 @@ static void test_boil_coarse(void) {
     an_scene_destroy(s);
 }
 
+// Shake: intensity 12 px, 0.5 s, triggered at 0.2 s (frame 12 at 60 fps); the
+// camera's base position stays (480, 270).
+//   before: frames 0..11 -> shake exactly {0, 0}
+//   from the end on: t >= 0.7 s, frame 42 and later -> exactly {0, 0}
+//   frame 21: 0.15 s after the trigger: u = 0.3, trauma 0.7, amplitude 12 x 0.49
+//     = 5.88; noise at k = 0.15 x 15 = 2.25: samples 2 and 3, f = 0.25, smoothstep
+//     w = 0.25^2 (3 - 0.5) = 0.15625; x uses stream 0x5EA4E000, y 0x5EA4E001
+//   the same values whatever order the frames are sampled in
+static void test_shake(void) {
+    an_scene *s = scene(false);
+    an_rect(s, &(an_rect_opts){ .pos = { 480, 270 }, .size = { 200, 120 }, .fill = AN_HEX(0x0078BF) });
+    an_wait(s, 0.2f);
+    an_play(s, an_shake(s, 12.0f, &(an_anim_opts){ .duration = 0.5f }));
+    an_wait(s, 0.3f);
+    const int64_t L = an_scene_length(s);
+    CHECK(L == 60);
+    an_vec2 fwd[61], rev[61], shuf[61];
+    for (int64_t f = 0; f <= L; f++) { an_seek(s, f); fwd[f] = an_camera_get(s).shake; }
+    for (int64_t f = L; f >= 0; f--) { an_seek(s, f); rev[f] = an_camera_get(s).shake; }
+    an_rng rng = an_rng_make(5, 5);
+    int order[61];
+    for (int i = 0; i <= 60; i++) order[i] = i;
+    for (int i = 60; i > 0; i--) { const int j = (int)an_rng_below(&rng, (uint32_t)i + 1); const int t = order[i]; order[i] = order[j]; order[j] = t; }
+    for (int i = 0; i <= 60; i++) { an_seek(s, order[i]); shuf[order[i]] = an_camera_get(s).shake; }
+    CHECK(memcmp(fwd, rev, sizeof fwd) == 0 && memcmp(fwd, shuf, sizeof fwd) == 0);
+    int rest_before = 0, rest_after = 0, moving = 0;
+    for (int f = 0; f <= 60; f++) {
+        const bool zero = fwd[f].x == 0.0f && fwd[f].y == 0.0f;
+        if (f < 12) rest_before += zero;
+        else if (f >= 42) rest_after += zero;
+        else moving += !zero;
+        an_seek(s, f);
+        CHECK(an_camera_get(s).pos.x == 480.0f && an_camera_get(s).pos.y == 270.0f); // the base never moves
+    }
+    CHECK(rest_before == 12 && rest_after == 19 && moving == 30);
+    // frame 21 by hand
+    const double w = 0.15625;
+    double n[2];
+    for (int c = 0; c < 2; c++) {
+        const double h0 = an_hash_float(4, 0x5EA4E000ull + (uint64_t)c, 2), h1 = an_hash_float(4, 0x5EA4E000ull + (uint64_t)c, 3);
+        n[c] = (h0 + (h1 - h0) * w) * 2.0 - 1.0;
+    }
+    CHECK_NEAR(fwd[21].x, 5.88 * n[0], 1e-5);
+    CHECK_NEAR(fwd[21].y, 5.88 * n[1], 1e-5);
+    // in pixels: at rest (frame 60) the frame is byte-identical to frame 0
+    const size_t bytes = (size_t)W * H * 4;
+    unsigned char *f0 = malloc(bytes);
+    render(s, 0);
+    memcpy(f0, g_px, bytes);
+    render(s, 60);
+    CHECK(memcmp(f0, g_px, bytes) == 0);
+    render(s, 21);
+    CHECK(memcmp(f0, g_px, bytes) != 0); // and it does move mid-shake
+    free(f0);
+    an_scene_destroy(s);
+}
+
 int main(void) {
     if (!ani_gfx_setup_headless()) {
         fprintf(stderr, "test_camera: headless Metal setup failed\n");
@@ -175,6 +232,7 @@ int main(void) {
     test_max_zoom();
     test_zoom_code();
     test_boil_coarse();
+    test_shake();
 
     free(g_px);
     ani_renderer_shutdown(&g_r);

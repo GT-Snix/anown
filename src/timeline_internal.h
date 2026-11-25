@@ -71,8 +71,12 @@ double ani_scene_chaos_at(an_scene *s, ani_time at);
 typedef struct ani_camera {
     an_vec2 pos;
     float zoom, rot;
+    an_vec2 shake; // screen px, applied after zoom and rotation
 } ani_camera;
 ani_camera ani_camera_at(an_scene *s, ani_time at);
+// The camera shake offset alone (screen px) at a time: a pure function of the
+// scene's seed, its shake events and the time (docs/camera.md).
+an_vec2 ani_shake_at(const an_scene *s, ani_time at);
 // An object's area scale on screen at a time: camera zoom x sqrt |det| of its
 // and its ancestors' scales (verb scales included once verbs exist).
 double ani_obj_area_scale_at(an_obj *o, ani_time at);

@@ -1172,11 +1172,14 @@ bool ani_tess_scene(ani_mesh *m, const an_scene *s, int64_t frame) {
     m->cam_dx = m->cam_dy = 0.0f;
     m->max_screen_scale = 0.0f;
     m->snapped_letters = 0;
+    // view = translate(center - shake) rotate(-rot) scale(zoom) translate(-pos): the
+    // shake is in screen px, after zoom and rotation (docs/camera.md)
     if (cam.zoom == 1.0f && cam.rot == 0.0f && !m->cam_fast_off) {
-        m->cam_dx = w * 0.5f - cam.pos.x;
-        m->cam_dy = h * 0.5f - cam.pos.y;
+        m->cam_dx = w * 0.5f - cam.shake.x - cam.pos.x;
+        m->cam_dy = h * 0.5f - cam.shake.y - cam.pos.y;
     } else {
-        root = ani_affine_mul(ani_local((an_vec2){ w * 0.5f, h * 0.5f }, (an_vec2){ cam.zoom, cam.zoom }, -cam.rot),
+        root = ani_affine_mul(ani_local((an_vec2){ w * 0.5f - cam.shake.x, h * 0.5f - cam.shake.y },
+                                        (an_vec2){ cam.zoom, cam.zoom }, -cam.rot),
                               (ani_affine){ 1, 0, 0, 1, -cam.pos.x, -cam.pos.y });
     }
     m->memo_hits = m->memo_misses = 0;
