@@ -271,6 +271,40 @@ static void test_paper_under_default(void) {
     an_scene_destroy(s);
 }
 
+// ---- the code marker --------------------------------------------------------------------------
+
+// an_code at pos (40, 40), mono 30, no line numbers: code from x 18 (block),
+// width 1 column = 18; baselines 51 + 40 (n - 1) in the block, so line 3 at 131 and
+// line 5 at 211 (+40 on screen: 171, 251). The marker's bar covers the line box,
+// baseline - 30.6 .. baseline + 9, and x 18 - 9 .. 18 + 18 + 9 = 9..45 (49..85 on
+// screen); column 82 is right of the letters (x 58..76). Line 5: rows 220.4..260:
+// 221..259 magenta (riot's accent b, #FF2E88 = (255, 46, 136)), row 220 half (the
+// samples at +0.625 and +0.875 are inside: (249, 141.5, 181)), 260 paper.
+// Line 3: rows 140.4..180. Timeline: goto 3 at 0 (a 0.25 s fade: frames 0..15),
+// then goto 5 (a 0.35 s slide: frames 15..36).
+static void test_code_marker(void) {
+    an_scene *s = scene();
+    an_set_chaos(s, 0.0f);
+    an_obj *c = an_code(s, &(an_code_opts){ .pos = { 40, 40 }, .code = "a\nb\nc\nd\ne\nf" });
+    an_code_marker(c, NULL);
+    render(s, 0);
+    CHECK(PAPER(82, 160) && PAPER(82, 240)); // hidden before its first goto
+    an_play(s, an_code_goto(c, 3, NULL));
+    an_play(s, an_code_goto(c, 5, NULL));
+    an_wait(s, 0.2f);
+    CHECK(an_code_current_line(c) == 5);
+    // frame 8: fading in AT line 3 (the first goto doesn't slide): tau = 8/15,
+    // in-out alpha = 1 - (2 - 2 tau)^3 / 2 = 0.5935: magenta x 0.5935 + paper x 0.4065
+    render(s, 8);
+    CHECK(near(82, 160, 250.1, 123.6, 172.6, 1.5));
+    render(s, 15);
+    CHECK(is(82, 160, 255, 46, 136) && PAPER(82, 240));
+    render(s, 36);
+    CHECK(is(82, 221, 255, 46, 136) && is(82, 240, 255, 46, 136) && is(82, 259, 255, 46, 136));
+    CHECK(near(82, 220, 249, 141.5, 181, 1) && PAPER(82, 260) && PAPER(82, 160));
+    an_scene_destroy(s);
+}
+
 int main(void) {
     if (!ani_gfx_setup_headless()) {
         fprintf(stderr, "test_explainer: headless Metal setup failed\n");
@@ -287,6 +321,7 @@ int main(void) {
     test_highlight();
     test_fade_one_layer();
     test_paper_under_default();
+    test_code_marker();
 
     free(g_px);
     ani_renderer_shutdown(&g_r);

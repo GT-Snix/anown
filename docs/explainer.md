@@ -210,7 +210,9 @@ an_anim an_code_goto(an_obj *code, int line, const an_anim_opts *opts);
 ```
 
 - **The marker:** a group with a bar behind the line (the line box, like the
-  highlight bars, in its own color) and a ▶ triangle in the gutter.
+  highlight bars, in its own color: the palette's accent b by default) and an
+  arrow left of the block. *(As built: an arrow, not a filled ▶ triangle. There
+  is no filled arbitrary polygon in the API; see the friction list.)*
   - It's created hidden at `first_line`.
   - Its first `an_code_goto` fades it in at that line's position, with no
     slide from first_line. Later ones slide it, as a pos y track, from line to

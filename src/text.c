@@ -3,6 +3,7 @@
 #include "text_internal.h"
 #include "font_internal.h"
 #include "scene_internal.h"
+#include "timeline_internal.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -348,6 +349,12 @@ an_obj *an_code(an_scene *s, const an_code_opts *opts) {
     const float gutter = o.line_numbers ? (float)(digits + 2) * adv : 0.0f;
     const float code_x = pad_x + gutter;
     const float base0 = pad_y + roundf(asc);
+    g->u.code.base0 = base0;
+    g->u.code.pitch = pitch;
+    g->u.code.asc = asc;
+    g->u.code.desc = desc;
+    g->u.code.code_x = code_x;
+    g->u.code.adv = adv;
 
     // widest line, in columns (tabs are 4)
     int cols = 1, c = 0;
@@ -361,6 +368,7 @@ an_obj *an_code(an_scene *s, const an_code_opts *opts) {
         }
     }
     const float code_w = (float)cols * adv;
+    g->u.code.code_w = code_w;
     const float box_w = code_x + code_w + pad_x, box_h = pad_y * 2.0f + (float)nlines * pitch;
 
     const an_color ink = pal->ink, paper = s->background;
@@ -427,4 +435,65 @@ an_obj *an_code_text(const an_obj *code, int n) {
     if (!code || code->kind != AN_KIND_CODE) return NULL;
     const int i = n - code->u.code.first_line;
     return i >= 0 && i < code->u.code.nlines ? code->u.code.texts[i] : NULL;
+}
+
+// ---- the current-line marker (docs/explainer.md) -------------------------------------------
+
+an_obj *an_code_marker(an_obj *code, const an_code_marker_opts *opts) {
+    if (!code || code->kind != AN_KIND_CODE) return NULL;
+    if (code->u.code.marker) return code->u.code.marker;
+    an_scene *s = code->scene;
+    const an_code_marker_opts o = opts ? *opts : (an_code_marker_opts){ 0 };
+    const an_palette *pal = s->style.palette;
+    const float asc = code->u.code.asc, desc = code->u.code.desc, adv = code->u.code.adv;
+    // the group sits at line first_line's baseline; its children are relative to it
+    an_obj *m = an_group(s, &(an_group_opts){ .parent = code, .hidden = true, .z = -1,
+                                              .pos = { 0, code->u.code.base0 } });
+    if (!m) return NULL;
+    const float top = -asc, bot = -desc;
+    an_obj *bar = an_rect(s, &(an_rect_opts){
+        .parent = m, .pos = { code->u.code.code_x + code->u.code.code_w * 0.5f, (top + bot) * 0.5f },
+        .size = { code->u.code.code_w + adv, bot - top }, .fill = o.color.a > 0.0f ? o.color : pal->b });
+    an_obj *arrow = an_arrow(s, &(an_arrow_opts){
+        .parent = m, .from = { -46, (top + bot) * 0.5f }, .to = { -12, (top + bot) * 0.5f }, .head = 14,
+        .stroke = pal->ink, .stroke_width = 5 });
+    if (!bar || !arrow) return NULL;
+    code->u.code.marker = m;
+    return m;
+}
+
+an_anim an_code_goto(an_obj *code, int line, const an_anim_opts *opts) {
+    an_anim a = { .obj = code, .verb = AN_VERB_CODE_GOTO, .swap_i = line };
+    if (opts) a.opts = *opts;
+    return a;
+}
+
+int an_code_current_line(const an_obj *code) {
+    return code && code->kind == AN_KIND_CODE ? code->u.code.current : 0;
+}
+
+int64_t ani_code_record_goto(an_scene *s, const an_anim *a, int64_t start) {
+    an_obj *code = a->obj;
+    if (code->kind != AN_KIND_CODE) return start;
+    const int line = a->swap_i, i = line - code->u.code.first_line;
+    if (i < 0 || i >= code->u.code.nlines) {
+        fprintf(stderr, "anown: an_code_goto: line %d isn't in the block\n", line);
+        return start;
+    }
+    an_obj *m = an_code_marker(code, NULL);
+    if (!m) return start;
+    const ani_value to = { { 0, code->u.code.base0 + (float)i * code->u.code.pitch } };
+    int64_t end;
+    if (code->u.code.current == 0) { // the first goto: appear at the line, no slide
+        ani_record(s, ani_obj_prop(m, AN_PROP_POS), start, 0, AN_EASE_LINEAR, to, false, NULL);
+        const int64_t d = ani_ticks(a->opts.duration > 0.0f ? a->opts.duration : 0.25);
+        end = ani_record(s, ani_obj_prop(m, AN_PROP_OPACITY), start, d, a->opts.ease, (ani_value){ { 1 } }, false, NULL);
+    } else {
+        const int64_t d = ani_ticks(a->opts.duration > 0.0f ? a->opts.duration : 0.35);
+        an_ease e = a->opts.ease;
+        if (e.kind == AN_EASE_KIND_SPRING) e = AN_EASE_IN_OUT; // a spring would overshoot into the next line
+        end = ani_record(s, ani_obj_prop(m, AN_PROP_POS), start, d, e, to, false, NULL);
+    }
+    code->u.code.current = line;
+    return end;
 }

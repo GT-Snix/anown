@@ -661,6 +661,7 @@ int64_t ani_record_anim(an_scene *s, const an_anim *a, int64_t start) {
     if (!ani_prop_valid(ref.kind, a->prop)) return start;
     if (a->prop == AN_PROP_CAMERA_SHAKE) return record_shake(s, start, a->opts.duration > 0.0f ? a->opts.duration : 0.5f, a->value[0]);
     if (a->verb == AN_VERB_SWAP && a->obj) return ani_array_record_swap(s, a, start);
+    if (a->verb == AN_VERB_CODE_GOTO && a->obj) return ani_code_record_goto(s, a, start);
     if (a->verb != AN_VERB_NONE && a->obj) return record_verb(s, a, start);
     const bool spring = a->opts.ease.kind == AN_EASE_KIND_SPRING;
     int64_t duration = ani_ticks(a->opts.duration);

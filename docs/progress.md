@@ -842,3 +842,15 @@ seeking into the middle of a swap = the sequential render; highlight follows its
 element through a swap; the array fades as one layer with no seam;
 paper_under default. Breaking the lift or the permutation fails them. 19 test
 programs pass.
+
+## Explainer objects, 2: code marker (2026-11-25)
+
+`an_code_marker(code, opts)` (a bar behind the line box and an arrow left of the
+block, created hidden) and `an_code_goto(code, line, opts)`: the first goto
+shows it at the line with a 0.25 s fade (no slide), later ones slide it
+(0.35 s, in-out; springs are replaced by in-out so it can't overshoot into the
+next line). Ordinary pos and opacity tracks; `an_code_current_line` is
+script-time. Test (test_explainer): hidden before the first goto; mid-fade at
+line 3 by hand (alpha 0.5935); at line 5 the bar's rows are exactly the line
+box (221..259, row 220 half, 260 paper), and line 3 is clear again.
+The ▶ triangle became an arrow: no filled arbitrary polygons (friction list).

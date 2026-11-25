@@ -293,6 +293,8 @@ an_obj *an_code_line(const an_obj *code, int n);
 /* Line n's text object (its letters via an_text_glyph). */
 an_obj *an_code_text(const an_obj *code, int n);
 
+
+
 /* An empty node that transforms its children. */
 typedef struct an_group_opts {
     AN_OBJ_FIELDS
@@ -474,7 +476,8 @@ typedef struct an_verb_opts {
 
 /* What an an_anim records when played: one track (NONE), or several (the verbs,
  * and an_array_swap). */
-typedef enum an_verb_kind { AN_VERB_NONE = 0, AN_VERB_SLAP, AN_VERB_POP, AN_VERB_SQUASH, AN_VERB_SWAP } an_verb_kind;
+typedef enum an_verb_kind { AN_VERB_NONE = 0, AN_VERB_SLAP, AN_VERB_POP, AN_VERB_SQUASH, AN_VERB_SWAP,
+                            AN_VERB_CODE_GOTO } an_verb_kind;
 
 typedef struct an_anim {
     an_obj *obj;
@@ -489,7 +492,7 @@ typedef struct an_anim {
     an_verb_opts verb_opts;
     float arc_height;      /* an_move_arc: the arc's height (0: a straight track) */
     bool arc;
-    int swap_i, swap_j;    /* an_array_swap: the slots */
+    int swap_i, swap_j;    /* an_array_swap: the slots; an_code_goto: the line in swap_i */
 } an_anim;
 
 an_anim an_move_to(an_obj *o, an_vec2 to, const an_anim_opts *opts);
@@ -586,6 +589,20 @@ an_vec2 an_array_slot_pos(const an_obj *arr, int slot);
 an_anim an_array_swap(an_obj *arr, int i, int j, const an_anim_opts *opts);
 an_anim an_array_highlight(an_obj *arr, int slot, an_color fill, const an_anim_opts *opts);
 an_anim an_array_unhighlight(an_obj *arr, int slot, const an_anim_opts *opts);
+
+/* The current-line marker (docs/explainer.md): a bar behind the line box and an
+ * arrow left of the block, created hidden. an_code_goto shows it at a line the
+ * first time (a fade, no slide) and slides it from line to line after that;
+ * ordinary pos and opacity tracks on the marker. */
+typedef struct an_code_marker_opts {
+    an_color color;        /* the bar; alpha 0: the palette's accent b */
+} an_code_marker_opts;
+an_obj *an_code_marker(an_obj *code, const an_code_marker_opts *opts);
+/* Default 0.35 s slide (0.25 s fade the first time). Creates a default marker
+ * if the block has none. */
+an_anim an_code_goto(an_obj *code, int line, const an_anim_opts *opts);
+/* Script time: the last line an_code_goto recorded (0: none yet). */
+int an_code_current_line(const an_obj *code);
 
 /* Start at the cursor and move the cursor to the animation's end. */
 void an_play(an_scene *s, an_anim a);
