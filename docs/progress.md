@@ -1003,3 +1003,36 @@ docs/graphs.md is the spec.
 - Draw-on for plots isn't tested separately (it is the ordinary stroke draw).
 - The shadow of a clipped plot isn't clipped.
 - Ten friction points are listed in docs/graphs.md.
+
+## an_plane; examples/12_eigen chapters 0-3 and 6 (2026-11-25)
+
+**The plane:**
+- `an_plane` (docs/plane.md) maps grid, axes, vectors and lines through a 2×2
+  matrix before stroking.
+- Gates: the identity is byte-identical to the unmapped plane, and seek order
+  doesn't matter. The singular C = [[1,1],[1,1]] reached from I has no NaNs
+  and no grid jump.
+- Missing glyphs are reported once per (font, codepoint).
+
+**examples/12_eigen** (docs/eigen_script.md):
+- Chapters 0, 1, 2, 3 and 6 are built at 1920×1080, 30 fps. Stills (every
+  30th frame) are in out/eigen/.
+- Each chapter's first frame equals the previous chapter's last, byte for
+  byte.
+- `--chapter N` renders only that chapter's frames of the full timeline.
+
+**Computed in the script, not typed in:**
+- 4 of 24 ring arrows stay on their line, so 20 leave.
+- The probe hits are at 0° and 135°.
+- A·u = 3u and 2u.
+
+**Workarounds:**
+- Plane objects are named per chapter (`"ch2/v11"`), since plane content
+  can't be grouped.
+- A pop on a vector is a spring on its scale. Verbs don't apply to mapped
+  objects.
+- The scene's shadow default is off and the title asks for its shadow, because
+  a callout's label ignores the callout's `.shadow`.
+
+**Not built:** chapters 4 and 5 (ship order). Until then, chapter 6 follows
+chapter 3.

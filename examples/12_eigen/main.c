@@ -18,7 +18,7 @@
 enum { NCH = 7, FPS = 30, RING = 24 };
 // chapter durations, seconds (retime to the voiceover here)
 static const float DUR[NCH] = { 30, 60, 90, 120, 90, 70, 30 };
-static const bool BUILT[NCH] = { true, true, true, true, false, false, false };
+static const bool BUILT[NCH] = { true, true, true, true, false, false, true };
 
 static const float PI = 3.14159265358979f;
 #define MAGENTA AN_HEX(0xE6007E)
@@ -440,6 +440,44 @@ static void chapter3(void) {
     end_chapter(3);
 }
 
+// ---- chapter 6: recap ----------------------------------------------------------------------
+
+static an_obj *say_at(an_obj *g, const char *text, an_vec2 at, an_color c, float size, an_align al) {
+    an_obj *t = an_text(S, &(an_text_opts){ .parent = g, .text = text, .pos = at, .size = size, .align = al,
+                                            .anchor = AN_ANCHOR_MIDDLE, .fill = c, .hidden = true, .riso = AN_OFF,
+                                            .shadow = AN_OFF });
+    an_play(S, an_fade_to(t, 1, &(an_anim_opts){ .duration = 0.6f }));
+    return t;
+}
+
+static void chapter6(void) {
+    an_obj *g = chapter_group(6);
+    // the hook again, on the two lines that survive
+    an_play_async(S, an_plane_matrix_to(P, IDENTITY, &(an_anim_opts){ .duration = 1.5f }));
+    fade_all(c3_keep, c3_n, 0, 1.0f);
+    an_wait(S, 1.0f);
+    make_ring("ch6", CHARCOAL);
+    an_play(S, an_plane_matrix_to(P, A, &(an_anim_opts){ .duration = 3 }));
+    color_staying(A);
+    an_wait(S, 0.5f);
+    an_obj *t1 = say_at(g, "direction that survives", (an_vec2){ 1880, 495 }, MAGENTA, 42, AN_ALIGN_RIGHT);
+    an_wait(S, 0.5f);
+    // on the cyan line: the image of (1.6, -1.6) (A keeps the line), a little to its right
+    const an_vec2 q = an_plane_point_at_cursor(P, (an_vec2){ 1.6f, -1.6f });
+    an_obj *t2 = say_at(g, "direction that survives", (an_vec2){ q.x + 40, q.y }, CYAN, 42, AN_ALIGN_LEFT);
+    an_wait(S, 0.8f);
+    an_obj *t3 = say_at(g, "lambda = how much it stretches", (an_vec2){ 960, 1010 }, CHARCOAL, 52, AN_ALIGN_CENTER);
+    an_wait(S, 5.0f);
+    // the end card
+    an_play_async(S, an_fade_to(P, 0, &(an_anim_opts){ .duration = 1.2f }));
+    fade_all((an_obj *[]){ t1, t2, t3 }, 3, 0, 1.0f);
+    an_play_async(S, an_scale_to(title, (an_vec2){ 1, 1 }, &(an_anim_opts){ .duration = 1.0f }));
+    an_play(S, an_move_to(title, (an_vec2){ 960, 480 }, &(an_anim_opts){ .duration = 1.0f }));
+    an_play(S, an_slap(title, &(an_verb_opts){ .impact_shake = 12 }));
+    say_at(g, "the directions that don't turn", (an_vec2){ 960, 660 }, CHARCOAL, 64, AN_ALIGN_CENTER);
+    end_chapter(6);
+}
+
 // ---- main -----------------------------------------------------------------------------------
 
 int main(int argc, char **argv) {
@@ -457,7 +495,7 @@ int main(int argc, char **argv) {
     if (!S) return 1;
     P = an_plane(S, &(an_plane_opts){ .name = "plane" }); // 1 unit = 100 px at 1080p, origin at the center
 
-    void (*const chapters[NCH])(void) = { chapter0, chapter1, chapter2, chapter3, NULL, NULL, NULL };
+    void (*const chapters[NCH])(void) = { chapter0, chapter1, chapter2, chapter3, NULL, NULL, chapter6 };
     for (int c = 0; c < NCH; c++) {
         if (!BUILT[c]) continue;
         ch_start[c] = an_scene_time(S);
