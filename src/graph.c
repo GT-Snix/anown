@@ -87,25 +87,25 @@ an_obj *an_node(an_scene *s, const an_node_opts *opts) {
 
 // ---- states -----------------------------------------------------------------------------
 
-static an_anim state_anim(an_obj *o, an_verb_kind kind, an_cell_state st, const an_anim_opts *opts) {
+static an_anim state_anim(an_obj *o, an_verb_kind kind, an_state st, const an_anim_opts *opts) {
     an_anim x = { .obj = o, .verb = kind, .swap_j = (int)st };
     if (opts) x.opts = *opts;
     if (!(x.opts.duration > 0.0f)) x.opts.duration = 0.3f;
     return x;
 }
 
-an_anim an_node_set_state(an_obj *n, an_cell_state st, const an_anim_opts *opts) {
+an_anim an_node_set_state(an_obj *n, an_state st, const an_anim_opts *opts) {
     return state_anim(n, AN_VERB_NODE_STATE, st, opts);
 }
 
-an_anim an_edge_set_state(an_obj *e, an_cell_state st, const an_anim_opts *opts) {
+an_anim an_edge_set_state(an_obj *e, an_state st, const an_anim_opts *opts) {
     return state_anim(e, AN_VERB_EDGE_STATE, st, opts);
 }
 
-an_cell_state an_node_state_at_cursor(const an_obj *n) {
-    if (!n || n->kind != AN_KIND_NODE) return AN_CELL_BASE;
-    const ani_value v = ani_sample(ani_obj_prop(n->u.node.shape, AN_PROP_CELL_STATE), ani_tick_time(n->scene->cursor));
-    return (an_cell_state)(int)v.v[0];
+an_state an_node_state_at_cursor(const an_obj *n) {
+    if (!n || n->kind != AN_KIND_NODE) return AN_STATE_BASE;
+    const ani_value v = ani_sample(ani_obj_prop(n->u.node.shape, AN_PROP_STATE), ani_tick_time(n->scene->cursor));
+    return (an_state)(int)v.v[0];
 }
 
 // Record one object's state (node or edge) at `start`; returns its end.
@@ -113,16 +113,16 @@ static int64_t record_state(an_scene *s, an_obj *o, int st, const an_anim_opts *
     if (st < 0 || st > 3 || !o) return start;
     if (o->kind == AN_KIND_NODE) {
         an_obj *shape = o->u.node.shape;
-        ani_record(s, ani_obj_prop(shape, AN_PROP_CELL_STATE), start, 0, AN_EASE_LINEAR, (ani_value){ { (double)st } },
+        ani_record(s, ani_obj_prop(shape, AN_PROP_STATE), start, 0, AN_EASE_LINEAR, (ani_value){ { (double)st } },
                    false, NULL);
         const an_anim f = an_fill_to(shape, o->u.node.states[st], opts);
         return ani_record_anim(s, &f, start);
     }
     if (o->kind == AN_KIND_EDGE) {
-        ani_record(s, ani_obj_prop(o, AN_PROP_CELL_STATE), start, 0, AN_EASE_LINEAR, (ani_value){ { (double)st } },
+        ani_record(s, ani_obj_prop(o, AN_PROP_STATE), start, 0, AN_EASE_LINEAR, (ani_value){ { (double)st } },
                    false, NULL);
         const an_anim c = an_stroke_to(o, o->u.edge.states[st], opts);
-        const float wmul = (st == AN_CELL_ACTIVE || st == AN_CELL_DONE) ? 1.5f : 1.0f;
+        const float wmul = (st == AN_STATE_ACTIVE || st == AN_STATE_DONE) ? 1.5f : 1.0f;
         const an_anim w = an_stroke_width_to(o, o->u.edge.width * wmul, opts);
         const int64_t e1 = ani_record_anim(s, &c, start), e2 = ani_record_anim(s, &w, start);
         if (o->u.edge.head) { // the arrowhead in the same color
@@ -138,7 +138,7 @@ int64_t ani_graph_record_state(an_scene *s, const an_anim *a, int64_t start) {
     return record_state(s, a->obj, a->swap_j, &a->opts, start);
 }
 
-an_anim an_highlight_path(an_obj *const *objs, int n, an_cell_state st, float gap, const an_anim_opts *opts) {
+an_anim an_highlight_path(an_obj *const *objs, int n, an_state st, float gap, const an_anim_opts *opts) {
     an_anim x = { .verb = AN_VERB_PATH, .swap_i = n, .swap_j = (int)st, .gap = gap };
     if (opts) x.opts = *opts;
     if (!(x.opts.duration > 0.0f)) x.opts.duration = 0.3f;

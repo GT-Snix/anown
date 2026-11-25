@@ -254,7 +254,7 @@ int64_t ani_array_record_swap(an_scene *s, const an_anim *x, int64_t start) {
 
 // ---- named cell states ---------------------------------------------------------------------
 
-an_anim an_array_set_state(an_obj *a, int slot, an_cell_state state, const an_anim_opts *opts) {
+an_anim an_array_set_state(an_obj *a, int slot, an_state state, const an_anim_opts *opts) {
     an_anim x = { .obj = a, .verb = AN_VERB_CELL_STATE, .swap_i = slot, .swap_j = (int)state };
     if (opts) x.opts = *opts;
     if (!(x.opts.duration > 0.0f)) x.opts.duration = 0.3f;
@@ -266,17 +266,17 @@ int64_t ani_array_record_state(an_scene *s, const an_anim *x, int64_t start) {
     const int slot = x->swap_i, st = x->swap_j;
     if (!valid(a, slot) || st < 0 || st > 3) return start;
     an_obj *cell = an_array_cell(a, slot);
-    ani_record(s, ani_obj_prop(cell, AN_PROP_CELL_STATE), start, 0, AN_EASE_LINEAR, (ani_value){ { (double)st } },
+    ani_record(s, ani_obj_prop(cell, AN_PROP_STATE), start, 0, AN_EASE_LINEAR, (ani_value){ { (double)st } },
                false, NULL);
     const an_anim f = an_fill_to(cell, a->u.array.states[st], &x->opts);
     return ani_record_anim(s, &f, start);
 }
 
-an_cell_state an_array_state_at_cursor(const an_obj *a, int slot) {
-    if (!valid(a, slot)) return AN_CELL_BASE;
+an_state an_array_state_at_cursor(const an_obj *a, int slot) {
+    if (!valid(a, slot)) return AN_STATE_BASE;
     an_obj *cell = an_array_cell(a, slot);
-    const ani_value v = ani_sample(ani_obj_prop(cell, AN_PROP_CELL_STATE), ani_tick_time(a->scene->cursor));
-    return (an_cell_state)(int)v.v[0];
+    const ani_value v = ani_sample(ani_obj_prop(cell, AN_PROP_STATE), ani_tick_time(a->scene->cursor));
+    return (an_state)(int)v.v[0];
 }
 
 // ---- script-time bounds --------------------------------------------------------------------

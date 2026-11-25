@@ -28,7 +28,7 @@ static int a[N];
 static void line(const char *name) { an_play(S, an_code_goto_anchor(code, name, NULL)); }
 
 // put a slot's element into a named state (colors set on the array)
-static an_handle state(int slot, an_cell_state st) {
+static an_handle state(int slot, an_state st) {
     return an_play_async(S, an_array_set_state(arr, slot, st, NULL));
 }
 
@@ -36,8 +36,8 @@ static an_handle state(int slot, an_cell_state st) {
 static void focus(int lo, int hi) {
     an_handle h = { 0 };
     for (int k = 0; k < N; k++) {
-        if (an_array_state_at_cursor(arr, k) == AN_CELL_DONE) continue;
-        h = state(k, (k >= lo && k <= hi) ? AN_CELL_BASE : AN_CELL_DIMMED);
+        if (an_array_state_at_cursor(arr, k) == AN_STATE_DONE) continue;
+        h = state(k, (k >= lo && k <= hi) ? AN_STATE_BASE : AN_STATE_DIMMED);
     }
     an_wait_until(h);
     an_wait(S, 0.05f); // a beat
@@ -61,7 +61,7 @@ static void swap_slots(int i, int j, const char *code_line) {
 
 static int partition(int lo, int hi) {
     line("pivot");
-    an_play_async(S, an_array_set_state(arr, hi, AN_CELL_ACTIVE, &(an_anim_opts){ .duration = 0.25f })); // the pivot
+    an_play_async(S, an_array_set_state(arr, hi, AN_STATE_ACTIVE, &(an_anim_opts){ .duration = 0.25f })); // the pivot
     an_play_async(S, an_array_point(pi_ptr, lo, NULL));
     an_play(S, an_array_point(pj_ptr, lo, NULL));
     int i = lo;
@@ -77,7 +77,7 @@ static int partition(int lo, int hi) {
         }
     }
     swap_slots(i, hi, "place"); // the pivot lands
-    state(i, AN_CELL_DONE);
+    state(i, AN_STATE_DONE);
     an_play(S, an_slap(an_array_item(arr, i), &(an_verb_opts){ .amount = 1.4f }));
     line("return");
     return i;
@@ -86,7 +86,7 @@ static int partition(int lo, int hi) {
 static void quicksort(int lo, int hi) {
     if (lo > hi) return;
     if (lo == hi) { // one element: already in place
-        an_wait_until(state(lo, AN_CELL_DONE));
+        an_wait_until(state(lo, AN_STATE_DONE));
         an_wait(S, 0.05f); // a beat
         return;
     }
@@ -130,7 +130,7 @@ int main(int argc, char **argv) {
     an_code_marker(code, NULL);
     arr = an_array(S, &(an_array_opts){ .pos = { 960, 800 }, .values = a, .count = N, .cell = { 80, 80 },
                                         .index_labels = true, .fill = pal->a,
-                                        .state_colors = { [AN_CELL_DIMMED] = AN_HEX(0xD6D2C8) } }); // paper, a little darker
+                                        .state_colors = { [AN_STATE_DIMMED] = AN_HEX(0xD6D2C8) } }); // paper, a little darker
     pi_ptr = an_array_pointer(arr, 0, &(an_pointer_opts){ .label = "i", .hidden = true });
     pj_ptr = an_array_pointer(arr, 0, &(an_pointer_opts){ .label = "j", .hidden = true });
 

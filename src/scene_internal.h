@@ -47,7 +47,7 @@ struct an_obj {
     // the verb transform's BASE state (docs/camera.md)
     an_vec2 vscale, vpivot; // vpivot: the object's center, set at creation
     float vrot;
-    int cell_state;     // array cells: an_cell_state (base of AN_PROP_CELL_STATE)
+    int state;          // named state (an_state): array cells, nodes, edges; base of AN_PROP_STATE
 
     // tracks per animatable property; NULL until the first track
     ani_channel *ch[AN_PROP_COUNT];

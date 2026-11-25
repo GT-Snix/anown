@@ -395,15 +395,15 @@ static void test_cursor_and_states(void) {
     an_seek(s, 0);
     CHECK_NEAR(an_obj_at_cursor(r).opacity, 0.75, 1e-6);
     an_obj *a = array5(s, (an_vec2){ 960, 900 }, NULL);
-    an_play_async(s, an_array_set_state(a, 2, AN_CELL_DONE, NULL));
-    CHECK(an_array_state_at_cursor(a, 2) == AN_CELL_DONE && an_array_state_at_cursor(a, 1) == AN_CELL_BASE);
+    an_play_async(s, an_array_set_state(a, 2, AN_STATE_DONE, NULL));
+    CHECK(an_array_state_at_cursor(a, 2) == AN_STATE_DONE && an_array_state_at_cursor(a, 1) == AN_STATE_BASE);
     const an_color cyan = AN_HEX(0x00C2FF), lime = AN_HEX(0xC6FF00);
     CHECK(an_obj_at_cursor(an_array_cell(a, 2)).fill.g == cyan.g); // the fill track has just started
     an_play(s, an_array_swap(a, 2, 4, NULL));
-    CHECK(an_array_state_at_cursor(a, 4) == AN_CELL_DONE && an_array_state_at_cursor(a, 2) == AN_CELL_BASE);
+    CHECK(an_array_state_at_cursor(a, 4) == AN_STATE_DONE && an_array_state_at_cursor(a, 2) == AN_STATE_BASE);
     const an_obj_state st = an_obj_at_cursor(an_array_cell(a, 4));
     CHECK(st.fill.r == lime.r && st.fill.g == lime.g && st.fill.b == lime.b);
-    an_play(s, an_array_set_state(a, 0, AN_CELL_DIMMED, NULL));
+    an_play(s, an_array_set_state(a, 0, AN_STATE_DIMMED, NULL));
     const an_color d = an_obj_at_cursor(an_array_cell(a, 0)).fill;
     CHECK_NEAR(d.r * 255.0, 216.48, 1e-3);
     CHECK_NEAR(d.g * 255.0, 211.2, 1e-3);

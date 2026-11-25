@@ -28,7 +28,7 @@ static const ani_prop_info g_props[AN_PROP_COUNT] = {
     [AN_PROP_VERB_SCALE] = { 2, ANI_SPACE_LINEAR, 1e-4 },
     [AN_PROP_VERB_ROTATION] = { 1, ANI_SPACE_LINEAR, 1e-4 },
     [AN_PROP_VERB_PIVOT] = { 2, ANI_SPACE_STEP, 0.0 },
-    [AN_PROP_CELL_STATE] = { 1, ANI_SPACE_STEP, 0.0 },
+    [AN_PROP_STATE] = { 1, ANI_SPACE_STEP, 0.0 },
 };
 
 #define SETTLE_RELATIVE 1e-3 // spring tolerance relative to travel distance
@@ -84,7 +84,7 @@ ani_value ani_base_get(ani_prop_ref ref) {
     case AN_PROP_VERB_SCALE: return (ani_value){ { o->vscale.x, o->vscale.y } };
     case AN_PROP_VERB_ROTATION: return (ani_value){ { o->vrot } };
     case AN_PROP_VERB_PIVOT: return (ani_value){ { o->vpivot.x, o->vpivot.y } };
-    case AN_PROP_CELL_STATE: return (ani_value){ { (double)o->cell_state } };
+    case AN_PROP_STATE: return (ani_value){ { (double)o->state } };
     default: break; // camera properties aren't the object's
     }
     return (ani_value){ { 0 } };
@@ -114,7 +114,7 @@ static void base_set(ani_prop_ref ref, ani_value v) {
     case AN_PROP_VERB_SCALE: o->vscale = (an_vec2){ (float)v.v[0], (float)v.v[1] }; break;
     case AN_PROP_VERB_ROTATION: o->vrot = (float)v.v[0]; break;
     case AN_PROP_VERB_PIVOT: o->vpivot = (an_vec2){ (float)v.v[0], (float)v.v[1] }; break;
-    case AN_PROP_CELL_STATE: o->cell_state = (int)v.v[0]; break;
+    case AN_PROP_STATE: o->state = (int)v.v[0]; break;
     default: break;
     }
 }

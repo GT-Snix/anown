@@ -156,11 +156,11 @@ static void test_states(void) {
     an_obj *b = an_node(s, &(an_node_opts){ .pos = { 300, 100 }, .pattern = { .kind = AN_PATTERN_HALFTONE } });
     an_obj *e = an_edge(s, &(an_edge_opts){ .from = a, .to = b });
     CHECK(b->u.node.shape->paper_under && !a->u.node.shape->paper_under);
-    const an_handle h = an_play(s, an_highlight_path((an_obj *[]){ a, e, b }, 3, AN_CELL_ACTIVE, 0.2f, NULL));
+    const an_handle h = an_play(s, an_highlight_path((an_obj *[]){ a, e, b }, 3, AN_STATE_ACTIVE, 0.2f, NULL));
     CHECK(h.start == 0.0 && h.end == 0.7); // the last object's 0.3 s track starts at 0.4
-    const ani_prop_ref sb = ani_obj_prop(b->u.node.shape, AN_PROP_CELL_STATE);
+    const ani_prop_ref sb = ani_obj_prop(b->u.node.shape, AN_PROP_STATE);
     CHECK(ani_sample(sb, ani_tick_time(399999)).v[0] == 0.0 && ani_sample(sb, ani_tick_time(400000)).v[0] == 1.0);
-    CHECK(an_node_state_at_cursor(b) == AN_CELL_ACTIVE);
+    CHECK(an_node_state_at_cursor(b) == AN_STATE_ACTIVE);
     const an_color mag = AN_HEX(0xFF2E88);
     const an_obj_state ns = an_obj_at_cursor(a->u.node.shape), es = an_obj_at_cursor(e);
     CHECK(ns.fill.r == mag.r && ns.fill.g == mag.g && ns.fill.b == mag.b);

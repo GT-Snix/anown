@@ -76,7 +76,7 @@ static void insert(int k) {
         if (next < 0) break;
         at = next;
     }
-    if (np > 0) an_play(S, an_highlight_path(path, np, AN_CELL_ACTIVE, 0.3f, NULL));
+    if (np > 0) an_play(S, an_highlight_path(path, np, AN_STATE_ACTIVE, 0.3f, NULL));
 
     key[me] = k;
     parent[me] = par;
@@ -100,7 +100,7 @@ static void insert(int k) {
     }
 
     // back to normal
-    if (np > 0) an_play(S, an_highlight_path(path, np, AN_CELL_BASE, 0, &(an_anim_opts){ .duration = 0.25f }));
+    if (np > 0) an_play(S, an_highlight_path(path, np, AN_STATE_BASE, 0, &(an_anim_opts){ .duration = 0.25f }));
     an_wait(S, 0.2f);
 }
 

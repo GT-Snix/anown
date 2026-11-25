@@ -467,7 +467,7 @@ typedef enum an_prop {
     AN_PROP_VERB_SCALE,      /* vec2, default {1, 1} */
     AN_PROP_VERB_ROTATION,   /* radians, default 0 */
     AN_PROP_VERB_PIVOT,      /* local units, step; default the object's center */
-    AN_PROP_CELL_STATE,      /* array cells: their named state (an_array_set_state); step */
+    AN_PROP_STATE,      /* named state (an_state): array cells, nodes, edges; step */
     AN_PROP_COUNT
 } an_prop;
 
@@ -611,12 +611,12 @@ typedef struct an_array_opts {
     bool index_labels;
     bool no_values;
     an_font *font;         /* labels; NULL: an_font_mono */
-    an_color state_colors[4]; /* by an_cell_state; alpha 0: base = fill, active = palette b,
+    an_color state_colors[4]; /* by an_state; alpha 0: base = fill, active = palette b,
                                  dimmed = paper mixed 12% toward ink, done = palette c */
 } an_array_opts;
 
 /* Named cell states (an_array_set_state). */
-typedef enum an_cell_state { AN_CELL_BASE = 0, AN_CELL_ACTIVE, AN_CELL_DIMMED, AN_CELL_DONE } an_cell_state;
+typedef enum an_state { AN_STATE_BASE = 0, AN_STATE_ACTIVE, AN_STATE_DIMMED, AN_STATE_DONE } an_state;
 
 an_obj *an_array(an_scene *s, const an_array_opts *opts);
 /* The element (cell or bar group) in `slot`, as of the swaps played so far. */
@@ -633,9 +633,9 @@ an_anim an_array_unhighlight(an_obj *arr, int slot, const an_anim_opts *opts);
 /* Put the element in `slot` into a named state: a fill track to the state's
  * color (default 0.3 s) and a step on its state property, both on the element's
  * cell, so the state follows the element through swaps. */
-an_anim an_array_set_state(an_obj *arr, int slot, an_cell_state state, const an_anim_opts *opts);
+an_anim an_array_set_state(an_obj *arr, int slot, an_state state, const an_anim_opts *opts);
 /* Script time: the state of the element in `slot` at the cursor. */
-an_cell_state an_array_state_at_cursor(const an_obj *arr, int slot);
+an_state an_array_state_at_cursor(const an_obj *arr, int slot);
 /* Script time: a slot's cell (or bar) box at the cursor, scene pixels. */
 an_bounds an_array_slot_bounds(const an_obj *arr, int slot);
 /* Script time: how far above the row's top edge (scene pixels, before any frame
@@ -717,7 +717,7 @@ typedef struct an_node_opts {
     an_vec2 size;          /* rounded rect; default {120, 70}; corners 0.25 x the shorter side */
     const char *label;
     an_font *font;         /* NULL: an_font_mono */
-    an_color state_colors[4]; /* as for arrays (an_cell_state) */
+    an_color state_colors[4]; /* as for arrays (an_state) */
 } an_node_opts;
 an_obj *an_node(an_scene *s, const an_node_opts *opts);
 /* An edge between two nodes (any objects that aren't edges or inside one). Its
@@ -786,14 +786,14 @@ an_obj *an_plot_data(an_obj *axes, const float *xs, const float *ys, int n, cons
 /* The k-th point or bar actually made (skipped ones don't count). */
 an_obj *an_plot_item(const an_obj *plot, int k);
 
-/* Node and edge states: the array's four (an_cell_state). An edge's state sets
+/* Node and edge states: the array's four (an_state). An edge's state sets
  * its stroke color (and width: 1.5x for ACTIVE and DONE). Default 0.3 s. */
-an_anim an_node_set_state(an_obj *node, an_cell_state state, const an_anim_opts *opts);
-an_anim an_edge_set_state(an_obj *edge, an_cell_state state, const an_anim_opts *opts);
-an_cell_state an_node_state_at_cursor(const an_obj *node);
+an_anim an_node_set_state(an_obj *node, an_state state, const an_anim_opts *opts);
+an_anim an_edge_set_state(an_obj *edge, an_state state, const an_anim_opts *opts);
+an_state an_node_state_at_cursor(const an_obj *node);
 /* Set every object (nodes and edges, in path order) to `state`, `gap` seconds
  * apart: one anim. The list is copied. */
-an_anim an_highlight_path(an_obj *const *objs, int n, an_cell_state state, float gap, const an_anim_opts *opts);
+an_anim an_highlight_path(an_obj *const *objs, int n, an_state state, float gap, const an_anim_opts *opts);
 
 /* Start at the cursor and move the cursor to the animation's end. */
 an_handle an_play(an_scene *s, an_anim a);
