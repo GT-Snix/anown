@@ -527,3 +527,21 @@ set from `ad288d0`:
      differently for the same reason.
   - 0 changed pixels outside these regions in any frame.
 - The new reference set is `out/golden/quicksort_polygon.sha256`.
+
+### Friction list: status
+
+| # | item | fix |
+|---|---|---|
+| 1, 2 | parallel with a gap; invisible durations | handles from every play call, `an_wait_until` (docs/timeline.md) |
+| 3 | hidden until a verb starts | `an_verb_opts.enter` (AUTO: on for pops) |
+| 4 | pointer options | `an_pointer_opts` |
+| 5 | `an_draw` on groups | containers reach their children; `an_callout_draw` removed |
+| 6 | filled polygons | `an_polygon`; heads and the marker triangle |
+| 7 | `NULL` | anown.h includes <stddef.h> |
+| 8 | state at the cursor | `an_obj_at_cursor`, `an_array_state_at_cursor` |
+| 9 | three-state highlights | named cell states, `an_array_set_state` |
+| 10 | line numbers in scripts | `//@name` anchors |
+| 11 | layout numbers | bounds queries |
+
+The quicksort script now has no hand-typed durations, no opacity flips, no
+bookkeeping arrays, no code line numbers, and checks its own layout.
