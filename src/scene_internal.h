@@ -98,7 +98,7 @@ struct an_obj {
         } code;
         // AN_KIND_CALLOUT: its parts
         struct {
-            an_obj *label, *arrow;
+            an_obj *label, *arrow, *head; // head: a filled triangle (an_polygon)
         } callout;
         // AN_KIND_ARRAY (docs/explainer.md)
         struct {

@@ -494,3 +494,36 @@ pixels, the world without the camera):
 The quicksort script checks its own layout with them: the longest swap peaks at
 y 516 and the code panel ends at 498 (an 18 px margin, now measured rather than
 read off the docs); the pointers end at 986 of 1080.
+
+### Polygons (friction 6)
+
+`an_polygon(s, &(an_polygon_opts){ .points, .count, ... })`: any polygon
+(concave, self-crossing), filled by the non-zero rule with the glyph
+stencil-then-cover fill. Boil, riso, shadow, the cut, patterns and
+`paper_under` come with it. It's outlined only if stroke or stroke_width is
+given, like rects. Its fill appears when its draw progress reaches 1: an
+outline drawing on closes, then the fill pops in, as for letters.
+- Callout and pointer arrows end in a filled triangle (tip `gap` short of the
+  target, 18 px long, 16 wide). The shaft now ends 10 px back, under the head.
+- The code marker's arrow is a filled ▶ triangle.
+
+**The only intended change to the quicksort frames.** Compared with the golden
+set from `ad288d0`:
+- 21 of 273 frames are identical:
+  - everything before the pointers and the marker appear (frames 0..160);
+  - frames 2560..2590, after the pointers and the marker have faded out and
+    before the callout appears.
+- 252 differ. Every changed pixel (more than 2 levels) falls inside one of four
+  regions, checked frame by frame against ffmpeg difference images:
+  1. **The code marker** (x 30..95): the arrow became a filled triangle.
+     235 frames.
+  2. **The pointer band** (y 880..975 across the slots): new heads and shorter
+     shafts. 239 frames.
+  3. **The "sorted!" callout's head.** 11 frames.
+  4. **The "sorted!" callout's label and shaft.** 13 frames. These didn't
+     change shape: each callout now has one more child (its head polygon), so
+     every object created after the first pointer has a different id, and boil
+     noise is keyed by the object's id. Pointer `j`'s shaft (in region 2) wobbles
+     differently for the same reason.
+  - 0 changed pixels outside these regions in any frame.
+- The new reference set is `out/golden/quicksort_polygon.sha256`.

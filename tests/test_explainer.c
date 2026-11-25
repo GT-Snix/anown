@@ -326,14 +326,21 @@ static void test_callout(void) {
     an_obj *c0 = an_callout(s, &(an_callout_opts){ .text = "ab", .font = mono, .pos = { 300, 300 }, .target = { 500, 300 } });
     an_obj *c1 = an_callout(s, &(an_callout_opts){ .text = "ab", .font = mono, .pos = { 300, 300 }, .target = { 500, 300 }, .bend = 0.5f });
     an_obj *c2 = an_callout(s, &(an_callout_opts){ .text = "ab", .font = mono, .pos = { 300, 300 }, .target = { 100, 300 } });
-    an_vec2 p = path_pt(c0->u.callout.arrow, 0, 0), q = path_pt(c0->u.callout.arrow, 0, 1);
+    // the tip is the head polygon's first point; the shaft ends under the head,
+    // 10 px back from the tip along the end tangent
+    CHECK(c0->u.callout.head && an_obj_kind(c0->u.callout.head) == AN_KIND_POLYGON);
+    an_vec2 p = path_pt(c0->u.callout.arrow, 0, 0), q = path_pt(c0->u.callout.arrow, 0, 1), tip = path_pt(c0->u.callout.head, 0, 0);
     CHECK_NEAR(p.x, 28.4, 1e-3);
     CHECK_NEAR(p.y, 0, 1e-4);
-    CHECK_NEAR(q.x, 190, 1e-3);
-    CHECK_NEAR(q.y, 0, 1e-4);
+    CHECK_NEAR(tip.x, 190, 1e-3);
+    CHECK_NEAR(tip.y, 0, 1e-4);
+    CHECK_NEAR(q.x, 180, 1e-3);
+    tip = path_pt(c1->u.callout.head, 0, 0);
     q = path_pt(c1->u.callout.arrow, 0, 1);
-    CHECK_NEAR(q.x, 191.056, 1e-3);
-    CHECK_NEAR(q.y, -4.472, 1e-3);
+    CHECK_NEAR(tip.x, 191.056, 1e-3);
+    CHECK_NEAR(tip.y, -4.472, 1e-3);
+    CHECK_NEAR(q.x, 191.056 - 8.9443, 1e-3);
+    CHECK_NEAR(q.y, -4.472 - 4.4721, 1e-3);
     p = path_pt(c2->u.callout.arrow, 0, 0);
     CHECK_NEAR(p.x, -28.4, 1e-3);
     // drawn on: create undrawn; an_draw on the callout reaches the arrow and the label
@@ -350,7 +357,8 @@ static void test_callout(void) {
 // below the row, the label 0.95 x 96 = 91.2 below that (array space y 211.2). Label
 // size 0.36 x 96 = 34.56: half its line box (1020 + 300) x 0.03456 / 2 = 22.81, + 8
 // = 30.81 from the label's center. So locally the arrow runs from (0, -30.81) to
-// (0, -91.2 + 4) = (0, -87.2) (gap 4). an_array_point to slot 4: the pointer ends
+// (0, -91.2 + 4) = (0, -87.2) (gap 4: the head's tip; the shaft ends 10 px back,
+// at -77.2). an_array_point to slot 4: the pointer ends
 // exactly at x 192, y unchanged.
 static void test_pointer(void) {
     an_scene *s = scene();
@@ -360,7 +368,8 @@ static void test_pointer(void) {
     CHECK_NEAR(ptr->pos.y, 211.2, 1e-3);
     const an_vec2 p = path_pt(ptr->u.callout.arrow, 0, 0), q = path_pt(ptr->u.callout.arrow, 0, 1);
     CHECK_NEAR(p.y, -30.81, 0.01);
-    CHECK_NEAR(q.y, -87.2, 1e-3);
+    CHECK_NEAR(path_pt(ptr->u.callout.head, 0, 0).y, -87.2, 1e-3);
+    CHECK_NEAR(q.y, -77.2, 1e-3);
     CHECK(p.x == 0.0f && q.x == 0.0f);
     an_play(s, an_array_point(ptr, 4, NULL));
     const an_vec2 e = pos_at(ptr, s, an_scene_length(s));
@@ -455,8 +464,8 @@ static void test_containers(void) {
     an_obj *ptr = an_array_pointer(a, 1, &(an_pointer_opts){ .label = "j", .hidden = true, .offset = 50, .color = red });
     an_seek(s, 0);
     CHECK(an_obj_get(ptr).opacity == 0.0f);
-    const an_vec2 tip = path_pt(ptr->u.callout.arrow, 0, 1);
-    CHECK_NEAR(ptr->pos.y + tip.y, 98.0 + 4.0, 1e-3); // the arrow stops gap 4 short of its target
+    const an_vec2 tip = path_pt(ptr->u.callout.head, 0, 0);
+    CHECK_NEAR(ptr->pos.y + tip.y, 98.0 + 4.0, 1e-3); // the head's tip stops gap 4 short of its target
     CHECK(an_obj_get(ptr->u.callout.arrow).stroke.r == 1.0f && an_obj_get(ptr->u.callout.label).fill.r == 1.0f);
     an_scene_destroy(s);
 }
@@ -502,6 +511,40 @@ static void test_bounds(void) {
     an_scene_destroy(s);
 }
 
+// ---- polygons -------------------------------------------------------------------------------
+
+// Chaos 0, black fills.
+//   L-shape (100,100) (200,100) (200,140) (140,140) (140,200) (100,200): (120,120)
+//   and (150,120) inside, the notch (170,170) paper, (99,150) paper.
+//   Pentagram, one path, points 80 px around (400, 200) at -90 + k x 144 degrees:
+//   the center has winding 2 (filled under non-zero; even-odd would leave it
+//   empty); a tip region (400, 135) is inside (winding 1); (400, 290) is outside.
+//   An undrawn outlined square (500..560): its fill is absent at draw 0.5 (frame
+//   30 of a 1 s linear draw) and present at frame 60.
+static void test_polygon(void) {
+    an_scene *s = scene();
+    an_set_chaos(s, 0.0f);
+    an_polygon(s, &(an_polygon_opts){ .points = (an_vec2[]){ { 100, 100 }, { 200, 100 }, { 200, 140 }, { 140, 140 },
+                                                             { 140, 200 }, { 100, 200 } }, .count = 6 });
+    an_vec2 star[5];
+    for (int k = 0; k < 5; k++) {
+        const double th = -1.5707963267948966 + k * 4.0 * 3.141592653589793 / 5.0;
+        star[k] = (an_vec2){ (float)(80.0 * cos(th)), (float)(80.0 * sin(th)) };
+    }
+    an_polygon(s, &(an_polygon_opts){ .pos = { 400, 200 }, .points = star, .count = 5 });
+    an_obj *sq = an_polygon(s, &(an_polygon_opts){ .undrawn = true, .stroke = AN_HEX(0x16161A), .stroke_width = 4,
+                                                   .points = (an_vec2[]){ { 500, 100 }, { 560, 100 }, { 560, 160 }, { 500, 160 } },
+                                                   .count = 4, .fill = AN_HEX(0x0078BF) });
+    an_play(s, an_draw(sq, &(an_anim_opts){ .duration = 1, .ease = AN_EASE_LINEAR }));
+    render(s, 30);
+    CHECK(is(120, 120, 0, 0, 0) && is(150, 120, 0, 0, 0) && PAPER(170, 170) && PAPER(99, 150));
+    CHECK(is(400, 200, 0, 0, 0) && is(400, 135, 0, 0, 0) && PAPER(400, 290));
+    CHECK(PAPER(530, 130));
+    render(s, 60);
+    CHECK(is(530, 130, 0, 120, 191));
+    an_scene_destroy(s);
+}
+
 int main(void) {
     if (!ani_gfx_setup_headless()) {
         fprintf(stderr, "test_explainer: headless Metal setup failed\n");
@@ -525,6 +568,7 @@ int main(void) {
     test_containers();
     test_code_anchors();
     test_bounds();
+    test_polygon();
 
     free(g_px);
     ani_renderer_shutdown(&g_r);

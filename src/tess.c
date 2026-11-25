@@ -269,8 +269,9 @@ static bool emit_ink(ani_mesh *m, const an_obj *o, ani_affine w, an_vec2 off, co
 }
 
 static bool has_fill(const an_obj *o, const emit_style *st) {
-    return (o->kind == AN_KIND_RECT || o->kind == AN_KIND_CIRCLE || o->kind == AN_KIND_GLYPH) && !o->no_fill &&
-           st->fill.a > 0.0f;
+    return (o->kind == AN_KIND_RECT || o->kind == AN_KIND_CIRCLE || o->kind == AN_KIND_GLYPH ||
+            o->kind == AN_KIND_POLYGON) &&
+           !o->no_fill && st->fill.a > 0.0f;
 }
 
 static bool has_ink(const an_obj *o, const emit_style *st) {
@@ -1144,6 +1145,29 @@ static bool visit_children(ani_mesh *m, const an_scene *s, const an_obj *parent,
             continue;
         }
         if (!flush_glyphs(m, s, gbase, target)) return false;
+        if (c->kind == AN_KIND_POLYGON) {
+            // filled by stencil-then-cover, like a letter (one-item batch)
+            glyph_item g = { .o = c, .w = w, .pw = w };
+            g.st = sample_style(s, c, chaos, at);
+            g.fill_on = has_fill(c, &g.st) && g.st.draw >= 1.0f; // pops in when its outline closes
+            g.ink_on = has_ink(c, &g.st) && g.st.draw > 0.0f;
+            g.soff = g.st.shadow_offset;
+            if (g.st.shadow && g.ink_on) {
+                const float wpx = g.st.stroke_width * sqrtf(fabsf(w.a * w.d - w.b * w.c)) * g.st.chaos;
+                g.soff.x += g.st.shadow_offset.x > 0 ? wpx : (g.st.shadow_offset.x < 0 ? -wpx : 0.0f);
+                g.soff.y += g.st.shadow_offset.y > 0 ? wpx : (g.st.shadow_offset.y < 0 ? -wpx : 0.0f);
+            }
+            const bool tr = (g.fill_on && g.st.fill.a < 1.0f) || (g.ink_on && g.st.stroke.a < 1.0f) ||
+                            (g.st.shadow && g.st.shadow_color.a < 1.0f && (g.fill_on || g.ink_on));
+            int t = target;
+            if (m->force_isolate || opacity < 1.0f || (tr && target == ANI_TARGET_MAIN)) {
+                t = layer_new(m, target, opacity, c);
+                if (t < 0) return false;
+            }
+            if (!emit_glyphs_memo(m, s, &g, 1, t)) return false;
+            if (c->first_child && !visit_children(m, s, c, w, t, chaos, rest, at)) return false;
+            continue;
+        }
         emit_style st = { 0 };
         const bool drawable = c->kind != AN_KIND_GROUP && c->kind != AN_KIND_TEXT && c->kind != AN_KIND_CODE &&
                               c->kind != AN_KIND_ARRAY && c->kind != AN_KIND_CALLOUT;

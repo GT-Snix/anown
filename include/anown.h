@@ -146,6 +146,7 @@ typedef enum an_kind {
     AN_KIND_CODE,  /* a code block (an_code): a group of lines */
     AN_KIND_ARRAY, /* an array / bar visualizer (an_array): a group of elements */
     AN_KIND_CALLOUT, /* a label and an arrow (an_callout, an_array_pointer): a group */
+    AN_KIND_POLYGON, /* a filled polygon (an_polygon) */
 } an_kind;
 
 typedef struct an_obj an_obj;
@@ -349,6 +350,17 @@ typedef struct an_stroke_opts {
     int seg_count;
 } an_stroke_opts;
 
+/* A filled polygon (any shape: concave, self-overlapping), filled by the non-zero
+ * rule with the same stencil fill as text; outlined only if stroke or
+ * stroke_width is given (as for rects). Its fill appears when its draw progress
+ * reaches 1 (an outline drawing on closes, then the fill pops in, like a letter).
+ * Points are relative to pos; copied. */
+typedef struct an_polygon_opts {
+    AN_OBJ_FIELDS
+    const an_vec2 *points;
+    int count;             /* at least 3 */
+} an_polygon_opts;
+
 /* Objects are created at the scene's cursor and aren't drawn before it.
  * Each returns NULL on allocation failure, if opts->parent is invalid, or if
  * opts->name is already used in the scene (with a message on stderr). */
@@ -359,6 +371,7 @@ an_obj *an_text(an_scene *s, const an_text_opts *opts);
 an_obj *an_group(an_scene *s, const an_group_opts *opts);
 an_obj *an_arrow(an_scene *s, const an_arrow_opts *opts);
 an_obj *an_stroke(an_scene *s, const an_stroke_opts *opts);
+an_obj *an_polygon(an_scene *s, const an_polygon_opts *opts);
 
 /* Setters record an instant change at the cursor: from then on the value is
  * the one set, cutting off any animation running on that property. Values are

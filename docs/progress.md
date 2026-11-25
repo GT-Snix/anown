@@ -947,3 +947,14 @@ frames identical to the golden set. Test: `test_code_anchors`.
 (one function computes the swap heights for both the swap and the query). The
 quicksort script checks its layout with them (18 px between the longest swap's
 peak and the code panel). Frames identical to the golden set. Test: `test_bounds`.
+
+## API fixes, 6: polygons (2026-11-25)
+
+`an_polygon` (non-zero stencil fill, as for text; fill pops in at draw 1).
+Callout and pointer heads are filled triangles; the code marker is a filled ▶.
+The one intended change to the quicksort frames: 252 of 273 differ from the
+golden set, every changed pixel inside the marker, the pointer band, or the
+"sorted!" callout (its label and shaft only through boil noise: ids shifted by
+the new head objects). 0 changed pixels elsewhere (docs/explainer.md,
+"Polygons"). New reference: `out/golden/quicksort_polygon.sha256`. Test:
+`test_polygon` (concave notch, pentagram center by non-zero, fill timing).

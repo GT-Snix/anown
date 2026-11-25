@@ -61,21 +61,26 @@ an_obj *an_callout(an_scene *s, const an_callout_opts *opts) {
         }
         const float bend = o.bend < -1.0f ? -1.0f : o.bend > 1.0f ? 1.0f : o.bend;
         const an_vec2 c = { (a0.x + t.x) * 0.5f + nx * bend * len * 0.5f, (a0.y + t.y) * 0.5f + ny * bend * len * 0.5f };
-        // end: gap short of the target along the end tangent (target - control)
+        // the tip: gap short of the target along the end tangent (target - control)
         const float ex = t.x - c.x, ey = t.y - c.y, el = sqrtf(ex * ex + ey * ey);
-        const an_vec2 e = { t.x - ex / el * gap, t.y - ey / el * gap };
-        // head: two strokes back from the tip at +-28 degrees, 16 px
-        const float ux = ex / el, uy = ey / el, cs = cosf(0.4887f), sn = sinf(0.4887f), hl = 16.0f;
-        const an_vec2 h1 = { e.x - hl * (ux * cs - uy * sn), e.y - hl * (uy * cs + ux * sn) };
-        const an_vec2 h2 = { e.x - hl * (ux * cs + uy * sn), e.y - hl * (uy * cs - ux * sn) };
+        const float ux = ex / el, uy = ey / el;
+        const an_vec2 e = { t.x - ux * gap, t.y - uy * gap };
+        // head: a filled triangle (an_polygon), 18 px long, 16 wide; the shaft ends
+        // under it, 10 px back from the tip
+        const float hl = 18.0f, hwid = 8.0f;
+        const an_vec2 hb = { e.x - ux * hl, e.y - uy * hl };
+        const an_vec2 se = { e.x - ux * 10.0f, e.y - uy * 10.0f };
+        const an_color ac = o.stroke.a > 0.0f ? o.stroke : pal->ink;
         an_obj *arrow = an_stroke(s, &(an_stroke_opts){
-            .parent = g, .undrawn = o.undrawn, .stroke = o.stroke.a > 0.0f ? o.stroke : pal->ink,
+            .parent = g, .undrawn = o.undrawn, .stroke = ac,
             .stroke_width = o.stroke_width > 0.0f ? o.stroke_width : 5.0f, .brush = o.brush, .shadow = o.shadow,
-            .segs = (an_seg[]){ AN_MOVE(a0.x, a0.y), AN_QUAD(c.x, c.y, e.x, e.y), AN_MOVE(h1.x, h1.y), AN_LINE(e.x, e.y),
-                                AN_LINE(h2.x, h2.y) },
-            .seg_count = 5 });
-        if (!arrow) return NULL;
+            .segs = (an_seg[]){ AN_MOVE(a0.x, a0.y), AN_QUAD(c.x, c.y, se.x, se.y) }, .seg_count = 2 });
+        an_obj *head = an_polygon(s, &(an_polygon_opts){
+            .parent = g, .undrawn = o.undrawn, .fill = ac, .shadow = o.shadow,
+            .points = (an_vec2[]){ e, { hb.x - uy * hwid, hb.y + ux * hwid }, { hb.x + uy * hwid, hb.y - ux * hwid } }, .count = 3 });
+        if (!arrow || !head) return NULL;
         g->u.callout.arrow = arrow;
+        g->u.callout.head = head;
     }
     g->u.callout.label = label;
     return g;

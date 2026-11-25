@@ -259,3 +259,18 @@ an_obj *an_obj_parent(const an_obj *o) {
     if (!o || !o->parent || o->parent == &o->scene->root) return NULL;
     return o->parent;
 }
+
+an_obj *an_polygon(an_scene *s, const an_polygon_opts *opts) {
+    const an_polygon_opts o = opts ? *opts : (an_polygon_opts){ 0 };
+    if (!s || !o.points || o.count < 3) return NULL;
+    ani_path_builder b;
+    ani_pb_init(&b);
+    bool ok = ani_pb_move(&b, o.points[0]);
+    for (int k = 1; ok && k < o.count; k++) ok = ani_pb_line(&b, o.points[k]);
+    ani_pb_close(&b);
+    ani_path *path = ok ? ani_pb_finish(&b, &s->arena) : NULL;
+    ani_pb_free(&b);
+    if (!path) return NULL;
+    // with_path also puts the verb pivot at the center of the points' box
+    return with_path(ani_obj_make(s, AN_KIND_POLYGON, ANI_COMMON(&o)), path, ani_outline_requested(o.stroke, o.stroke_width));
+}

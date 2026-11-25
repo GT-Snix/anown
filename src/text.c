@@ -504,10 +504,11 @@ an_obj *an_code_marker(an_obj *code, const an_code_marker_opts *opts) {
     an_obj *bar = an_rect(s, &(an_rect_opts){
         .parent = m, .pos = { code->u.code.code_x + code->u.code.code_w * 0.5f, (top + bot) * 0.5f },
         .size = { code->u.code.code_w + adv, bot - top }, .fill = o.color.a > 0.0f ? o.color : pal->b });
-    an_obj *arrow = an_arrow(s, &(an_arrow_opts){
-        .parent = m, .from = { -46, (top + bot) * 0.5f }, .to = { -12, (top + bot) * 0.5f }, .head = 14,
-        .stroke = pal->ink, .stroke_width = 5 });
-    if (!bar || !arrow) return NULL;
+    // a filled triangle (an_polygon) left of the block, pointing at the line
+    const float mid = (top + bot) * 0.5f;
+    an_obj *tri = an_polygon(s, &(an_polygon_opts){
+        .parent = m, .fill = pal->ink, .points = (an_vec2[]){ { -10, mid }, { -32, mid - 11 }, { -32, mid + 11 } }, .count = 3 });
+    if (!bar || !tri) return NULL;
     code->u.code.marker = m;
     return m;
 }
