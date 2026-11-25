@@ -805,8 +805,12 @@ typedef struct an_axes_opts {
     float label_size;      /* tick label em size; default 26 */
 } an_axes_opts;
 an_obj *an_axes(an_scene *s, const an_axes_opts *opts);
+/* Data to scene space, at the cursor: the axes' world transform there (parents,
+ * scale, rotation, verbs) composed in. A snapshot: if the axes move later, the
+ * point doesn't follow (parent the object to the axes and use an_axes_local). */
+an_vec2 an_axes_point_at_cursor(const an_obj *axes, float x, float y);
 /* Data to the axes' own space (y up on screen as data grows). */
-an_vec2 an_axes_point(const an_obj *axes, float x, float y);
+an_vec2 an_axes_local(const an_obj *axes, float x, float y);
 
 typedef enum an_plot_style { AN_PLOT_POINTS = 0, AN_PLOT_BARS } an_plot_style;
 typedef struct an_plot_opts {

@@ -206,7 +206,7 @@ used:
   down and right, so near the right and bottom edges it reaches past the box by
   the shadow offset. Turn the shadow off on the plot (`.shadow = AN_OFF`) if
   that matters.
-- **Exact mapping:** `an_axes_point` multiplies before dividing
+- **Exact mapping:** `an_axes_local` (formerly `an_axes_point`) multiplies before dividing
   (`(x - min) * w / range`), so round values land on exact pixels (6 of 0..10
   over 800 px is 480, where `6 / 10 * 800` is 479.99997).
 

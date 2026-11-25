@@ -145,12 +145,11 @@ int main(int argc, char **argv) {
     an_wait(S, 0.4f);
     an_obj *curve = an_plot_function(ax, best, NULL, &(an_plot_opts){ .stroke = pal->b, .stroke_width = 6, .undrawn = true });
     an_play(S, an_draw(curve, &(an_anim_opts){ .duration = 1.2f }));
-    // the callout points at the curve at n = 10; points are in the axes' space, the
-    // callout wants scene space, so add the axes' position
-    const an_vec2 tip = an_axes_point(ax, 10, best(10, NULL));
+    // the callout points at the curve at n = 10
+    const an_vec2 tip = an_axes_point_at_cursor(ax, 10, best(10, NULL));
     an_obj *note = an_callout(S, &(an_callout_opts){ .text = "best case: log2(n+1)", .size = 40,
-                                                       .pos = { 360 + tip.x - 60, 220 + tip.y + 170 },
-                                                       .target = { 360 + tip.x, 220 + tip.y + 14 }, .bend = 0.3f,
+                                                       .pos = { tip.x - 60, tip.y + 170 },
+                                                       .target = { tip.x, tip.y + 14 }, .bend = 0.3f,
                                                        .undrawn = true });
     an_play(S, an_draw(note, &(an_anim_opts){ .duration = 0.7f }));
     an_wait(S, 2.0f);

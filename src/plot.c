@@ -2,6 +2,8 @@
 // function is sampled adaptively and clipped to the plot box as geometry
 // (Liang-Barsky), so neither a layer nor a stencil bit is needed.
 #include "scene_internal.h"
+#include "tess_internal.h"
+#include "timeline_internal.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -13,12 +15,18 @@ static float nice_step(float range) {
     return (float)((f < 1.5 ? 1.0 : f < 3.5 ? 2.0 : f < 7.5 ? 5.0 : 10.0) * p);
 }
 
-an_vec2 an_axes_point(const an_obj *ax, float x, float y) {
+an_vec2 an_axes_local(const an_obj *ax, float x, float y) {
     if (!ax || ax->kind != AN_KIND_AXES) return (an_vec2){ 0, 0 };
     const float w = ax->u.axes.size.x, h = ax->u.axes.size.y;
     // multiply first: exact for round values (6 x 800 / 10 = 480, where 6 / 10 x 800 isn't)
     return (an_vec2){ (x - ax->u.axes.x_min) * w / (ax->u.axes.x_max - ax->u.axes.x_min),
                       h - (y - ax->u.axes.y_min) * h / (ax->u.axes.y_max - ax->u.axes.y_min) };
+}
+
+an_vec2 an_axes_point_at_cursor(const an_obj *ax, float x, float y) {
+    if (!ax || ax->kind != AN_KIND_AXES) return (an_vec2){ 0, 0 };
+    const ani_affine w = ani_obj_world_at((an_obj *)ax, ani_tick_time(ax->scene->cursor)); // sampling only reads
+    return ani_affine_apply(w, an_axes_local(ax, x, y));
 }
 
 static an_obj *ink_line(an_scene *s, an_obj *parent, an_vec2 a, an_vec2 b, float width, an_color ink, bool undrawn,
@@ -66,7 +74,7 @@ an_obj *an_axes(an_scene *s, const an_axes_opts *opts) {
     char buf[32];
     const int x0 = (int)ceil(o.x_min / o.x_step - 1e-4), x1 = (int)floor(o.x_max / o.x_step + 1e-4);
     for (int k = x0; k <= x1; k++) {
-        const float v = (float)((double)k * o.x_step), px = an_axes_point(ax, v, o.y_min).x;
+        const float v = (float)((double)k * o.x_step), px = an_axes_local(ax, v, o.y_min).x;
         if (!ink_line(s, ax, (an_vec2){ px, h }, (an_vec2){ px, h + 12 }, sw * 0.6f, ink, o.undrawn, "x tick", k - x0, 0))
             return NULL;
         snprintf(buf, sizeof buf, "%g", (double)v);
@@ -75,7 +83,7 @@ an_obj *an_axes(an_scene *s, const an_axes_opts *opts) {
     }
     const int y0 = (int)ceil(o.y_min / o.y_step - 1e-4), y1 = (int)floor(o.y_max / o.y_step + 1e-4);
     for (int k = y0; k <= y1; k++) {
-        const float v = (float)((double)k * o.y_step), py = an_axes_point(ax, o.x_min, v).y;
+        const float v = (float)((double)k * o.y_step), py = an_axes_local(ax, o.x_min, v).y;
         if (!ink_line(s, ax, (an_vec2){ 0, py }, (an_vec2){ -12, py }, sw * 0.6f, ink, o.undrawn, "y tick", k - y0, 0))
             return NULL;
         snprintf(buf, sizeof buf, "%g", (double)v);
@@ -124,7 +132,7 @@ typedef struct fn_ctx {
 static bool eval(const fn_ctx *c, float x, an_vec2 *p) {
     const float y = c->f(x, c->user);
     if (!isfinite(y)) return false;
-    *p = an_axes_point(c->ax, x, y);
+    *p = an_axes_local(c->ax, x, y);
     return isfinite(p->x) && isfinite(p->y);
 }
 
@@ -254,7 +262,7 @@ an_obj *an_plot_data(an_obj *ax, const float *xs, const float *ys, int n, const 
                 continue;
             }
             const float v = ys[k] < ylo ? ylo : ys[k] > yhi ? yhi : ys[k]; // clipped to the box
-            const an_vec2 top = an_axes_point(ax, xs[k], v), bot = an_axes_point(ax, xs[k], base);
+            const an_vec2 top = an_axes_local(ax, xs[k], v), bot = an_axes_local(ax, xs[k], base);
             const float bw = o.size > 0 ? o.size : 0.6f * ax->u.axes.size.x / (float)n;
             const float bh = fabsf(bot.y - top.y);
             an_obj *r = an_rect(s, &(an_rect_opts){ .parent = g, .pos = { top.x, (top.y + bot.y) * 0.5f },
@@ -269,7 +277,7 @@ an_obj *an_plot_data(an_obj *ax, const float *xs, const float *ys, int n, const 
                 skipped++;
                 continue;
             }
-            an_obj *pt = an_circle(s, &(an_circle_opts){ .parent = g, .pos = an_axes_point(ax, xs[k], ys[k]),
+            an_obj *pt = an_circle(s, &(an_circle_opts){ .parent = g, .pos = an_axes_local(ax, xs[k], ys[k]),
                                                          .radius = o.size > 0 ? o.size : 6.0f, .fill = fill, .stroke = ink,
                                                          .stroke_width = sw, .undrawn = o.undrawn, .pattern = o.pattern,
                                                          .riso = o.riso, .shadow = o.shadow, .brush = o.brush,

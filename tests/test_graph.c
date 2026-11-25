@@ -419,11 +419,11 @@ static void test_axes(void) {
     an_scene *s = scene();
     an_obj *ax = an_axes(s, &(an_axes_opts){ .pos = { 200, 100 }, .size = { 800, 500 }, .x_max = 10, .y_max = 5,
                                              .x_step = 2, .y_step = 1 });
-    an_vec2 p = an_axes_point(ax, 5, 2.5f);
+    an_vec2 p = an_axes_local(ax, 5, 2.5f);
     POS(p, 400, 250);
-    p = an_axes_point(ax, 0, 0);
+    p = an_axes_local(ax, 0, 0);
     POS(p, 0, 500);
-    p = an_axes_point(ax, 10, 5);
+    p = an_axes_local(ax, 10, 5);
     POS(p, 800, 0);
     int strokes = 0, texts = 0, xt = 0, yt = 0;
     for (an_obj *c = ax->first_child; c; c = c->next_sibling) {
@@ -444,6 +444,31 @@ static void test_axes(void) {
         dy += a.x == 0.0f && b.x == -12.0f;
     }
     CHECK(dx == 6 && dy == 6);
+
+    // scene space (an_axes_point_at_cursor): the axes above are top-level at (200, 100),
+    // so (5, 2.5) -> local (400, 250) -> scene (600, 350).
+    p = an_axes_point_at_cursor(ax, 5, 2.5f);
+    POS(p, 600, 350);
+    // scaled x2 at (200, 100): (200 + 2 x 400, 100 + 2 x 250) = (1000, 600)
+    an_obj *big = an_axes(s, &(an_axes_opts){ .pos = { 200, 100 }, .scale = { 2, 2 }, .size = { 800, 500 }, .x_max = 10,
+                                              .y_max = 5 });
+    p = an_axes_point_at_cursor(big, 5, 2.5f);
+    POS(p, 1000, 600);
+    // nested: axes at (200, 100) inside a group at (50, 30) turned 90 degrees clockwise
+    // (y down: (x, y) -> (-y, x)): local (400, 250) -> group (600, 350) -> (-350, 600)
+    // -> scene (-300, 630)
+    an_obj *grp = an_group(s, &(an_group_opts){ .pos = { 50, 30 }, .rotation = 1.5707963267948966f });
+    an_obj *nest = an_axes(s, &(an_axes_opts){ .parent = grp, .pos = { 200, 100 }, .size = { 800, 500 }, .x_max = 10,
+                                               .y_max = 5 });
+    p = an_axes_point_at_cursor(nest, 5, 2.5f);
+    CHECK_NEAR(p.x, -300, 1e-3);
+    CHECK_NEAR(p.y, 630, 1e-3);
+    // a snapshot at the cursor: after the group moves by (100, 0) over 1 s, the point
+    // at the new cursor is (-200, 630); the plots (children of the axes) are unchanged
+    an_play(s, an_move_by(grp, (an_vec2){ 100, 0 }, &(an_anim_opts){ .duration = 1 }));
+    p = an_axes_point_at_cursor(nest, 5, 2.5f);
+    CHECK_NEAR(p.x, -200, 1e-3);
+    CHECK_NEAR(p.y, 630, 1e-3);
 
     // f(x) = x / 2: a straight line from (0, 500) to (800, 0), slope -0.625, so no
     // splits: 33 samples. Clipped to the inset box: it enters where y = 496 (x = 6.4,
