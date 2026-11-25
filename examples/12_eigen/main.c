@@ -18,7 +18,7 @@
 enum { NCH = 7, FPS = 30, RING = 24 };
 // chapter durations, seconds (retime to the voiceover here)
 static const float DUR[NCH] = { 30, 60, 90, 120, 90, 70, 30 };
-static const bool BUILT[NCH] = { true, false, false, false, false, false, false };
+static const bool BUILT[NCH] = { true, true, false, false, false, false, false };
 
 static const float PI = 3.14159265358979f;
 #define MAGENTA AN_HEX(0xE6007E)
@@ -27,6 +27,7 @@ static const float PI = 3.14159265358979f;
 #define ORANGE AN_HEX(0xFF6A00)
 
 static const an_mat2 A = { 3, 1, 0, 2 }; // eigenvectors (1, 0) [3] and (1, -1) [2]
+static const an_mat2 IDENTITY = { 1, 0, 0, 1 };
 
 static an_scene *S;
 static an_obj *P; // the plane
@@ -99,6 +100,33 @@ static void color_staying(an_mat2 m) {
     an_wait(S, 0.6f);
 }
 
+// fade a set of objects together and wait for it
+static void fade_all(an_obj *const *objs, int n, float to, float dur) {
+    an_handle h = { 0 };
+    for (int k = 0; k < n; k++)
+        if (objs[k]) h = an_play_async(S, an_fade_to(objs[k], to, &(an_anim_opts){ .duration = dur }));
+    an_wait_until(h);
+}
+
+// a pale version of a color (toward the paper)
+static an_color pale(an_color c, float t) {
+    const an_color p = AN_HEX(0xF3EDE2);
+    return (an_color){ c.r + (p.r - c.r) * t, c.g + (p.g - c.g) * t, c.b + (p.b - c.b) * t, 1 };
+}
+
+// a "pop" for a plane arrow: its v grows from 0 with a spring
+static void pop_arrow(an_obj *a) {
+    an_obj_set_scale(a, (an_vec2){ 0, 0 });
+    an_play(S, an_scale_to(a, (an_vec2){ 1, 1 }, &(an_anim_opts){ .ease = an_spring(0.45f, 0.45f) }));
+}
+
+// a label anchored in the plane (moves with M, stays upright)
+static an_obj *plane_label(const char *name, const char *text, an_vec2 at, an_color c, float size) {
+    return an_text(S, &(an_text_opts){ .name = name, .parent = P, .text = text, .pos = at, .size = size,
+                                       .font = an_font_mono(S), .align = AN_ALIGN_CENTER, .anchor = AN_ANCHOR_MIDDLE,
+                                       .fill = c, .riso = AN_OFF, .shadow = AN_OFF });
+}
+
 static an_obj *chapter_group(int ch) { return an_group(S, &(an_group_opts){ .name = nm("ch%d", ch) }); }
 
 // hold until the chapter's duration is used up
@@ -135,6 +163,74 @@ static void chapter0(void) {
     end_chapter(0);
 }
 
+// ---- chapter 1: vectors and directions --------------------------------------------------
+
+enum { DOTS_X = 9, DOTS_Y = 5 };
+static an_obj *c1_keep[8 + (2 * DOTS_X + 1) * (2 * DOTS_Y + 1)];
+static int c1_n;
+
+static void chapter1(void) {
+    chapter_group(1); // (no scene-level objects in this chapter)
+    // back to the identity; the ring goes
+    an_play_async(S, an_plane_matrix_to(P, IDENTITY, &(an_anim_opts){ .duration = 1.5f }));
+    fade_all(ring, RING, 0, 0.8f);
+    an_wait(S, 1.0f);
+    // the axes
+    an_obj *ax = an_plane_line(P, (an_vec2){ 0, 0 }, (an_vec2){ 1, 0 }, &(an_line_opts){ .name = "ch1/axis/x", .z = -5,
+                                .stroke = CHARCOAL, .stroke_width = 4, .undrawn = true, .shadow = AN_OFF, .riso = AN_OFF });
+    an_obj *ay = an_plane_line(P, (an_vec2){ 0, 0 }, (an_vec2){ 0, 1 }, &(an_line_opts){ .name = "ch1/axis/y", .z = -5,
+                                .stroke = CHARCOAL, .stroke_width = 4, .undrawn = true, .shadow = AN_OFF, .riso = AN_OFF });
+    an_play_async(S, an_draw(ax, &(an_anim_opts){ .duration = 1.2f }));
+    an_play(S, an_draw(ay, &(an_anim_opts){ .duration = 1.2f }));
+    an_wait(S, 1.0f);
+    // v = (2, 1) pops in, labeled
+    an_obj *v = arrow("ch1/v", (an_vec2){ 2, 1 }, CHARCOAL, 6, false);
+    pop_arrow(v);
+    an_obj *vl = plane_label("ch1/v/label", "v", (an_vec2){ 2.15f, 1.35f }, CHARCOAL, 44);
+    an_obj_set_opacity(vl, 0);
+    an_play(S, an_fade_to(vl, 1, &(an_anim_opts){ .duration = 0.4f }));
+    an_wait(S, 2.0f);
+    // its line of directions
+    an_obj *line = an_plane_line(P, (an_vec2){ 0, 0 }, (an_vec2){ 2, 1 }, &(an_line_opts){ .name = "ch1/v/line", .z = -4,
+                                  .stroke = pale(CHARCOAL, 0.55f), .stroke_width = 2, .hidden = true, .shadow = AN_OFF });
+    an_play(S, an_fade_to(line, 1, &(an_anim_opts){ .duration = 1.2f }));
+    an_wait(S, 3.0f);
+    // a probe sweeps once around the origin (rotation is clockwise: -2 pi turns it counter-clockwise)
+    an_obj *probe = arrow("ch1/probe", (an_vec2){ 1.5f, 0 }, ORANGE, 6, false);
+    pop_arrow(probe);
+    an_play(S, an_rotate_to(probe, -2.0f * PI, &(an_anim_opts){ .duration = 8, .ease = AN_EASE_LINEAR }));
+    an_play(S, an_fade_to(probe, 0, &(an_anim_opts){ .duration = 0.5f }));
+    an_wait(S, 2.0f);
+    // every point is the tip of some arrow: dots at the grid points...
+    c1_n = 0;
+    c1_keep[c1_n++] = v;
+    c1_keep[c1_n++] = vl;
+    c1_keep[c1_n++] = line;
+    an_obj *dots[(2 * DOTS_X + 1) * (2 * DOTS_Y + 1)];
+    int nd = 0;
+    for (int y = DOTS_Y; y >= -DOTS_Y; y--)
+        for (int x = -DOTS_X; x <= DOTS_X; x++) {
+            an_obj *d = an_plane_dot(P, (an_vec2){ (float)x, (float)y }, &(an_circle_opts){
+                                         .name = nm("ch1/dot/%d/%d", x, y), .radius = 5, .fill = CHARCOAL, .hidden = true,
+                                         .riso = AN_OFF, .shadow = AN_OFF });
+            dots[nd++] = d;
+            c1_keep[c1_n++] = d;
+        }
+    an_anim fades[(2 * DOTS_X + 1) * (2 * DOTS_Y + 1)];
+    for (int k = 0; k < nd; k++) fades[k] = an_fade_to(dots[k], 1, &(an_anim_opts){ .duration = 0.3f });
+    an_stagger(S, nd, fades, 0.012f);
+    an_wait(S, 1.5f);
+    // ...and arrows draw to a few of them
+    static const an_vec2 to[4] = { { 3, 2 }, { -2, 1 }, { -4, -3 }, { 1, -4 } };
+    for (int k = 0; k < 4; k++) {
+        an_obj *a = arrow(nm("ch1/to/%d", k), to[k], CHARCOAL, 5, true);
+        an_play(S, an_draw(a, &(an_anim_opts){ .duration = 0.7f }));
+        an_wait(S, 0.6f);
+        c1_keep[c1_n++] = a;
+    }
+    end_chapter(1);
+}
+
 // ---- main -----------------------------------------------------------------------------------
 
 int main(int argc, char **argv) {
@@ -151,7 +247,7 @@ int main(int argc, char **argv) {
     if (!S) return 1;
     P = an_plane(S, &(an_plane_opts){ .name = "plane" }); // 1 unit = 100 px at 1080p, origin at the center
 
-    void (*const chapters[NCH])(void) = { chapter0, NULL, NULL, NULL, NULL, NULL, NULL };
+    void (*const chapters[NCH])(void) = { chapter0, chapter1, NULL, NULL, NULL, NULL, NULL };
     for (int c = 0; c < NCH; c++) {
         if (!BUILT[c]) continue;
         ch_start[c] = an_scene_time(S);
