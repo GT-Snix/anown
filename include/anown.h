@@ -715,6 +715,20 @@ int64_t an_scene_export(an_scene *s, const an_export_desc *desc);
 /* Render one frame offscreen and write it as a PNG. Returns false on failure. */
 bool an_scene_save_png(an_scene *s, int64_t frame, const char *path);
 
+/* Frame dumps: every `every`-th frame from first to last (inclusive) as PNGs
+ * named DIR/PREFIX_NNNN.png. One renderer for the whole range (much faster than
+ * an_scene_save_png per frame) and the same pixels: grain as in PNGs
+ * (AN_GRAIN_AUTO: animated). PNGs are encoded on several threads. Returns the
+ * number written, or -1 on failure. */
+typedef struct an_frames_desc {
+    const char *dir;     /* must exist */
+    const char *prefix;  /* default "frame" */
+    int every;           /* default 1 */
+    int64_t first;       /* default 0 */
+    int64_t last;        /* 0: an_scene_length(s) */
+} an_frames_desc;
+int64_t an_scene_save_frames(an_scene *s, const an_frames_desc *desc);
+
 /* ---- windows (no scene) ------------------------------------------------- */
 
 /* Options for an_window_run. Zero fields get defaults:

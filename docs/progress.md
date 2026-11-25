@@ -887,3 +887,15 @@ being that `an_play_async` doesn't return its end time (parallel-with-a-gap
 needs hand-typed default durations), verbs can't hold their start state before
 they begin, `an_array_pointer` has no options, and there's no script-time
 query of an object's state at the cursor.
+
+## API fixes (after 10_quicksort), 9: frame dumps (2026-11-25)
+
+Golden hashes of every 10th quicksort frame from `ad288d0` are in
+`out/golden/quicksort_ad288d0.sha256` (273 frames); `scripts/quicksort-golden.sh`
+re-dumps and compares them.
+`an_scene_save_frames(s, &(an_frames_desc){ .dir, .prefix, .every, .first, .last })`:
+one renderer for the range, the same pixels as `an_scene_save_png` (PNG grain:
+animated), PNGs encoded on 8 threads. 10_quicksort takes `--export FILE`,
+`--frames DIR`, `--every N` (default 10); `make example-quicksort` writes only
+the mp4, `make example-quicksort EVERY=10` also dumps frames. Every 10th frame:
+18 s instead of ~230 s, all 273 byte-identical to the golden set.

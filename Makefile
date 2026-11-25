@@ -109,12 +109,13 @@ $(BUILD)/tests/%: tests/%.c $(SHADER_H) $(LIB)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(INTERNAL) $< $(LIB) $(LDLIBS) -o $@
 
-# The quicksort explainer, exported unattended: out/quicksort.mp4 (share mode)
-# and every 10th frame as PNGs in out/quicksort_frames/.
+# The quicksort explainer, exported unattended: out/quicksort.mp4 (share mode).
+# EVERY=N also dumps every Nth frame as PNGs into out/quicksort_frames/ (no PNGs
+# by default).
 example-quicksort: $(BUILD)/examples/10_quicksort
-	@mkdir -p out/quicksort_frames
-	./$(BUILD)/examples/10_quicksort --export out/quicksort.mp4
-	./$(BUILD)/examples/10_quicksort --frames out/quicksort_frames 10
+	@mkdir -p out $(if $(EVERY),out/quicksort_frames)
+	./$(BUILD)/examples/10_quicksort --export out/quicksort.mp4 \
+		$(if $(EVERY),--frames out/quicksort_frames --every $(EVERY))
 
 run: $(BUILD)/examples/$(EX)
 	./$(BUILD)/examples/$(EX)

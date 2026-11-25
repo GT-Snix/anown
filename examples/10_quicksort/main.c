@@ -7,10 +7,9 @@
 //     callout says it's sorted
 // The sort runs here, at script time, in plain C; every step records animation.
 //
-//   make example-quicksort                            export (unattended)
+//   make example-quicksort [EVERY=10]                 export (unattended); EVERY: also PNGs
 //   ./build/examples/10_quicksort                     preview
-//   ./build/examples/10_quicksort --export FILE.mp4
-//   ./build/examples/10_quicksort --frames DIR [STEP]
+//   ./build/examples/10_quicksort --export FILE.mp4 [--frames DIR] [--every N]
 #include "anown.h"
 
 #include <stdio.h>
@@ -177,27 +176,27 @@ int main(int argc, char **argv) {
     printf("values:");
     for (int k = 0; k < N; k++) printf(" %d", a[k]);
     printf("\ntimeline %.2f s, frames 0..%lld\n", an_scene_time(S), (long long)an_scene_length(S));
-    int rc = 0;
-    if (argc >= 3 && strcmp(argv[1], "--export") == 0) {
-        const int64_t n = an_scene_export(S, &(an_export_desc){ .path = argv[2] });
-        if (n > 0) printf("wrote %s (%lld frames)\n", argv[2], (long long)n);
-        rc = n > 0 ? 0 : 1;
-    } else if (argc >= 3 && strcmp(argv[1], "--frames") == 0) {
-        const int step = argc >= 4 ? atoi(argv[3]) : 10;
-        int count = 0;
-        for (int64_t f = 0; f <= an_scene_length(S); f += step > 0 ? step : 10) {
-            char path[512];
-            snprintf(path, sizeof path, "%s/quicksort_%04lld.png", argv[2], (long long)f);
-            if (!an_scene_save_png(S, f, path)) {
-                rc = 1;
-                break;
-            }
-            count++;
-        }
-        printf("wrote %d PNG frames to %s\n", count, argv[2]);
-    } else {
-        an_scene_preview(S);
+    // --export FILE, --frames DIR, --every N (frame dumps: every Nth frame, default
+    // 10; no PNGs unless --frames is given); nothing: the preview
+    const char *mp4 = NULL, *dir = NULL;
+    int every = 10;
+    for (int k = 1; k + 1 < argc; k += 2) {
+        if (strcmp(argv[k], "--export") == 0) mp4 = argv[k + 1];
+        else if (strcmp(argv[k], "--frames") == 0) dir = argv[k + 1];
+        else if (strcmp(argv[k], "--every") == 0) every = atoi(argv[k + 1]);
     }
+    int rc = 0;
+    if (mp4) {
+        const int64_t n = an_scene_export(S, &(an_export_desc){ .path = mp4 });
+        if (n > 0) printf("wrote %s (%lld frames)\n", mp4, (long long)n);
+        rc = n > 0 ? 0 : 1;
+    }
+    if (dir && rc == 0) {
+        const int64_t n = an_scene_save_frames(S, &(an_frames_desc){ .dir = dir, .prefix = "quicksort", .every = every });
+        if (n >= 0) printf("wrote %lld PNG frames to %s (every %d)\n", (long long)n, dir, every);
+        rc = n >= 0 ? 0 : 1;
+    }
+    if (!mp4 && !dir) an_scene_preview(S);
     an_scene_destroy(S);
     return rc;
 }

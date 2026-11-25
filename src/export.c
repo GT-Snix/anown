@@ -3,6 +3,7 @@
 #include "offscreen_internal.h"
 #include "render_internal.h"
 
+#include <pthread.h>
 #include <signal.h>
 #include <sys/wait.h>
 #include <stdio.h>
@@ -162,4 +163,80 @@ bool an_scene_save_png(an_scene *s, int64_t frame, const char *path) {
     ani_offscreen_destroy(&off);
     ani_gfx_shutdown();
     return ok;
+}
+
+// ---- frame dumps ----------------------------------------------------------------------------
+
+typedef struct png_job {
+    char path[1024];
+    unsigned char *pixels;
+    int w, h;
+    bool ok;
+} png_job;
+
+static void *png_worker(void *arg) {
+    png_job *j = arg;
+    j->ok = stbi_write_png(j->path, j->w, j->h, 4, j->pixels, j->w * 4) != 0;
+    return NULL;
+}
+
+int64_t an_scene_save_frames(an_scene *s, const an_frames_desc *desc) {
+    if (!s || !desc || !desc->dir) return -1;
+    const an_frames_desc d = *desc;
+    const int every = d.every > 0 ? d.every : 1;
+    const int64_t first = d.first > 0 ? d.first : 0, last = d.last > 0 ? d.last : an_scene_length(s);
+    const char *prefix = d.prefix ? d.prefix : "frame";
+    enum { BATCH = 8 };
+    void *pool = ani_pool_push();
+    if (!ani_gfx_setup_headless()) {
+        fprintf(stderr, "anown: headless Metal setup failed\n");
+        ani_pool_pop(pool);
+        return -1;
+    }
+    ani_offscreen off = { 0 };
+    ani_renderer r = { 0 };
+    const size_t bytes = (size_t)s->width * (size_t)s->height * 4;
+    png_job *jobs = calloc(BATCH, sizeof *jobs);
+    bool ok = jobs && ani_offscreen_make_ds(&off, s->width, s->height, EXPORT_SAMPLES) &&
+              ani_renderer_init(&r, SG_PIXELFORMAT_RGBA8, SG_PIXELFORMAT_DEPTH_STENCIL, EXPORT_SAMPLES);
+    for (int k = 0; ok && k < BATCH; k++) {
+        jobs[k].pixels = malloc(bytes);
+        ok = jobs[k].pixels != NULL;
+    }
+    ani_pool_pop(pool);
+    int64_t written = 0;
+    for (int64_t f = first; ok && f <= last;) {
+        int n = 0;
+        for (; n < BATCH && f <= last; n++, f += every) {
+            pool = ani_pool_push();
+            ok = ani_renderer_prepare(&r, s, f, s->width, s->height);
+            ani_offscreen_begin(&off, s->background);
+            if (ok) ani_renderer_draw(&r);
+            sg_end_pass();
+            sg_commit();
+            if (ok) ani_offscreen_readback(&off, jobs[n].pixels);
+            ani_pool_pop(pool);
+            if (!ok) break;
+            snprintf(jobs[n].path, sizeof jobs[n].path, "%s/%s_%04lld.png", d.dir, prefix, (long long)f);
+            jobs[n].w = s->width;
+            jobs[n].h = s->height;
+        }
+        pthread_t th[BATCH];
+        for (int k = 0; k < n; k++) pthread_create(&th[k], NULL, png_worker, &jobs[k]);
+        for (int k = 0; k < n; k++) {
+            pthread_join(th[k], NULL);
+            if (!jobs[k].ok) {
+                fprintf(stderr, "anown: could not write %s\n", jobs[k].path);
+                ok = false;
+            } else {
+                written++;
+            }
+        }
+    }
+    for (int k = 0; jobs && k < BATCH; k++) free(jobs[k].pixels);
+    free(jobs);
+    ani_renderer_shutdown(&r);
+    ani_offscreen_destroy(&off);
+    ani_gfx_shutdown();
+    return ok ? written : -1;
 }
