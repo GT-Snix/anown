@@ -41,7 +41,7 @@ EX_BIN   += $(SPIKES:%=$(BUILD)/examples/%)
 TESTS    := $(patsubst tests/%.c,%,$(wildcard tests/test_*.c))
 TEST_BIN := $(TESTS:%=$(BUILD)/tests/%)
 
-.PHONY: all run test deps clean
+.PHONY: all run test deps clean clean-cache
 # Keep generated shader headers; make would otherwise delete them as intermediates.
 .SECONDARY: $(SHADER_H)
 all: $(LIB) $(EX_BIN) $(TEST_BIN)
@@ -59,9 +59,22 @@ $(BUILD)/obj/%.o: src/%.m
 	@mkdir -p $(dir $@)
 	$(CC) $(OBJCFLAGS) -Werror -c $< -o $@
 
-$(BUILD)/obj/sokol_impl.o: src/sokol_impl.m
-	@mkdir -p $(dir $@)
-	$(CC) $(OBJCFLAGS) -c $< -o $@
+# Vendor objects (sokol, stb) are the slowest compiles (2.4 s and 1.0 s) and
+# change only when the vendored headers do. They're cached in .vendor-cache/
+# (gitignored, outside build/, so make clean keeps it) under a key hashing the
+# impl file, the vendor headers and the flags: a clean build copies them; any
+# change to those inputs compiles (and caches) a new one.
+VENDOR_CACHE := .vendor-cache
+SOKOL_KEY := $(shell (cat src/sokol_impl.m vendor/sokol/*.h; echo '$(CC) $(OBJCFLAGS)') | shasum | cut -c1-16)
+STB_KEY   := $(shell (cat src/stb_impl.c vendor/stb/*.h; echo '$(CC) $(CFLAGS)') | shasum | cut -c1-16)
+
+$(BUILD)/obj/sokol_impl.o: src/sokol_impl.m $(wildcard vendor/sokol/*.h)
+	@mkdir -p $(dir $@) $(VENDOR_CACHE)
+	@if [ -f $(VENDOR_CACHE)/sokol_impl-$(SOKOL_KEY).o ]; then \
+		echo "cp $(VENDOR_CACHE)/sokol_impl-$(SOKOL_KEY).o $@"; cp $(VENDOR_CACHE)/sokol_impl-$(SOKOL_KEY).o $@; \
+	else \
+		echo "$(CC) $(OBJCFLAGS) -c $< -o $@"; $(CC) $(OBJCFLAGS) -c $< -o $@ && cp $@ $(VENDOR_CACHE)/sokol_impl-$(SOKOL_KEY).o; \
+	fi
 
 # the built-in fonts, embedded with .incbin (src/fonts.S)
 $(BUILD)/obj/fonts.o: src/fonts.S $(FONTS)
@@ -69,9 +82,14 @@ $(BUILD)/obj/fonts.o: src/fonts.S $(FONTS)
 	$(CC) -arch arm64 -c $< -o $@
 
 # stb_image_write and stb_truetype: vendor code, so no -Werror (and no -Wpedantic)
-$(BUILD)/obj/stb_impl.o: src/stb_impl.c
-	@mkdir -p $(dir $@)
-	$(CC) $(filter-out -Werror -Wpedantic,$(CFLAGS)) -c $< -o $@
+$(BUILD)/obj/stb_impl.o: src/stb_impl.c $(wildcard vendor/stb/*.h)
+	@mkdir -p $(dir $@) $(VENDOR_CACHE)
+	@if [ -f $(VENDOR_CACHE)/stb_impl-$(STB_KEY).o ]; then \
+		echo "cp $(VENDOR_CACHE)/stb_impl-$(STB_KEY).o $@"; cp $(VENDOR_CACHE)/stb_impl-$(STB_KEY).o $@; \
+	else \
+		echo "$(CC) $(filter-out -Werror -Wpedantic,$(CFLAGS)) -c $< -o $@"; \
+		$(CC) $(filter-out -Werror -Wpedantic,$(CFLAGS)) -c $< -o $@ && cp $@ $(VENDOR_CACHE)/stb_impl-$(STB_KEY).o; \
+	fi
 
 $(LIB): $(LIB_OBJ)
 	@rm -f $@
@@ -103,5 +121,9 @@ deps:
 
 clean:
 	rm -rf $(BUILD)
+
+# Also drop the cached vendor objects (they rebuild on the next make).
+clean-cache:
+	rm -rf $(VENDOR_CACHE)
 
 -include $(shell find $(BUILD) -name '*.d' 2>/dev/null)

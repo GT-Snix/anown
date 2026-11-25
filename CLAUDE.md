@@ -142,7 +142,10 @@ Out of scope for v1: LaTeX, 3D, audio, a GUI editor, and scripting-language bind
   `scripts/time-clean-build.sh`, which builds in a throwaway copy of the tree; never
   run `make clean` in the real tree just to time it.
   If it gets slower, find out why before adding more code. The Makefile sets
-  `-j<ncpu>`; `src/sokol_impl.m` alone takes ~2.5 s and everything else overlaps it.
+  `-j<ncpu>`. The vendor objects (`src/sokol_impl.m` 2.4 s, `src/stb_impl.c`
+  1.0 s) are cached in `.vendor-cache/` (gitignored, kept by `make clean`,
+  keyed by the vendor headers + impl file + flags), so a clean build is ~3 s;
+  `scripts/time-clean-build.sh --cold` times it without the cache (~4.5 s).
 - Our code compiles with `-std=c11 -Wall -Wextra -Wpedantic -Werror`. Vendor headers
   are included via `-isystem` so their warnings don't break the build. Our
   Objective-C (`src/*.m`, Metal glue) also uses `-Werror`. The sokol implementation

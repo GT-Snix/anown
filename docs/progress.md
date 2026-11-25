@@ -795,3 +795,20 @@ exported in 6.3 s wall (1.46x realtime; 25.3 s CPU including ffmpeg).
 byte-identical. 18 test programs pass; reference PNGs byte-identical. Clean
 build 4.92 s: at the 5 s budget, so the next addition should look at build time
 first.
+
+## History-free text under zoom; vendor object cache (2026-11-25)
+
+- Text snapping and the size factor depend only on the frame's own sampled
+  transforms (snapping: the text's world transform and the letter's own; the
+  factor: the scale without verbs, camera zoom included). New test
+  (`test_no_history` in test_camera): after a zoom round trip 1 -> 2.2 -> 1,
+  frames 30, 119, 120, 135 and 150 rendered straight from a fresh renderer are
+  byte-identical to the sequential render with a warm cache, with the same
+  snapped-letter count (3 at zoom 1, 0 otherwise) and chaos (0.6188).
+- Per-file compile times (serial, one at a time): sokol_impl.m 2.41 s,
+  stb_impl.c 0.99, offscreen.m 0.63, tess.c 0.44, test_text.c 0.36,
+  test_style.c 0.30, everything else <= 0.24; 11.4 s summed.
+- The vendor objects are cached in `.vendor-cache/` (Makefile): clean build
+  2.9–3.3 s with the cache, 4.3–4.6 s cold. That keeps the 5 s budget without
+  splitting any of our files (the largest, offscreen.m at 0.63 s, isn't on the
+  critical path). `make clean-cache` drops it.

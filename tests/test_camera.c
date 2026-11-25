@@ -337,6 +337,58 @@ static void test_slap_text_chaos(void) {
     an_scene_destroy(s);
 }
 
+// Snapping and the size factor have no history: a frame after a zoom round trip
+// (1 -> 2.2 -> 1, then held) is the same whether the renderer got there frame by
+// frame or jumped straight to it. Code text (calm at zoom 1: snapped, chaos 0)
+// and 28 px Archivo Black (chaos 0.6188 at zoom 1) in one scene; the sequential
+// pass uses the warm cache, the direct one a fresh renderer.
+//   frames 0..60 zoom in, 60..120 out, 120..150 at exactly 1
+//   checked: frames 30 (mid zoom), 119, 120, 135 and 150: pixels, snapped letter
+//   count (3 at zoom 1, 0 otherwise) and the Archivo letter's chaos (0.6188 at 1)
+static void test_no_history(void) {
+    an_scene *s = an_scene_create(&(an_scene_desc){ .width = W, .height = H, .fps = 60, .seed = 4,
+                                                    .style = { .grain_off = true, .vignette_off = true, .shadow = true } });
+    an_code(s, &(an_code_opts){ .pos = { 300, 300 }, .code = "abc", .no_box = true });
+    an_obj *t = an_text(s, &(an_text_opts){ .text = "x", .size = 28, .pos = { 600, 200 } });
+    an_play(s, an_camera_zoom_to(s, 2.2f, &(an_anim_opts){ .duration = 1.0f }));
+    an_play(s, an_camera_zoom_to(s, 1.0f, &(an_anim_opts){ .duration = 1.0f }));
+    an_wait(s, 0.5f);
+    static const int64_t frames[5] = { 30, 119, 120, 135, 150 };
+    const size_t bytes = (size_t)W * H * 4;
+    unsigned char *seq[5];
+    int seq_snapped[5];
+    int k = 0;
+    for (int64_t f = 0; f <= 150; f++) {
+        render(s, f);
+        if (k < 5 && f == frames[k]) {
+            seq[k] = malloc(bytes);
+            memcpy(seq[k], g_px, bytes);
+            seq_snapped[k] = g_r.mesh.snapped_letters;
+            k++;
+        }
+    }
+    ani_renderer fresh;
+    CHECK(ani_renderer_init(&fresh, SG_PIXELFORMAT_RGBA8, SG_PIXELFORMAT_DEPTH_STENCIL, 4));
+    for (int i = 4; i >= 0; i--) { // backwards, each straight from a cold renderer state
+        void *pool = ani_pool_push();
+        CHECK(ani_renderer_prepare(&fresh, s, frames[i], W, H));
+        ani_offscreen_begin(&g_off, AN_BLACK);
+        ani_renderer_draw(&fresh);
+        sg_end_pass();
+        sg_commit();
+        ani_offscreen_readback(&g_off, g_px);
+        ani_pool_pop(pool);
+        CHECK(memcmp(seq[i], g_px, bytes) == 0);
+        CHECK(fresh.mesh.snapped_letters == seq_snapped[i]);
+        CHECK(seq_snapped[i] == (frames[i] >= 120 ? 3 : 0));
+        an_seek(s, frames[i]);
+        if (frames[i] >= 120) CHECK_NEAR(an_obj_chaos(an_text_glyph(t, 0)), 0.6188, 1e-4);
+        free(seq[i]);
+    }
+    ani_renderer_shutdown(&fresh);
+    an_scene_destroy(s);
+}
+
 int main(void) {
     if (!ani_gfx_setup_headless()) {
         fprintf(stderr, "test_camera: headless Metal setup failed\n");
@@ -355,6 +407,7 @@ int main(void) {
     test_squash();
     test_pivot();
     test_slap_text_chaos();
+    test_no_history();
 
     free(g_px);
     ani_renderer_shutdown(&g_r);
