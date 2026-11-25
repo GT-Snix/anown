@@ -2,6 +2,8 @@
 #include "stroke_internal.h"
 #include "text_internal.h"
 #include "timeline_internal.h"
+#include "plane_internal.h"
+#include "rng_internal.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -1087,6 +1089,82 @@ static bool flush_glyphs(ani_mesh *m, const an_scene *s, int base, int target) {
     return n <= 0 || emit_glyphs_memo(m, s, (glyph_item *)m->glyphs + base, n, target);
 }
 
+static bool visit_children(ani_mesh *m, const an_scene *s, const an_obj *parent, ani_affine pw, int target,
+                           float pchaos, float prest, ani_time at);
+
+static ani_affine affine_inverse(ani_affine a) {
+    const float det = a.a * a.d - a.b * a.c;
+    if (!(fabsf(det) > 0.0f)) return (ani_affine){ 1, 0, 0, 1, 0, 0 };
+    const float ia = a.d / det, ib = -a.b / det, ic = -a.c / det, id = a.a / det;
+    return (ani_affine){ ia, ib, ic, id, -(ia * a.tx + ic * a.ty), -(ib * a.tx + id * a.ty) };
+}
+
+// One straight stroke of a plane child, in the plane's px, built in the frame
+// arena; `key` keys its boil (grid lines: per line); `extra` goes into the cache key.
+static bool emit_plane_seg(ani_mesh *m, const an_scene *s, const an_obj *c, uint64_t key, ani_affine pw, int t,
+                           const emit_style *st, an_vec2 a, an_vec2 b, const void *extra, size_t nextra) {
+    ani_path_builder pb;
+    ani_pb_init(&pb);
+    const bool ok = ani_pb_move(&pb, a) && ani_pb_line(&pb, b);
+    ani_path *path = ok ? ani_pb_finish(&pb, &m->frame_arena) : NULL;
+    ani_pb_free(&pb);
+    if (!path) return false;
+    an_obj tmp = *c;
+    tmp.kind = AN_KIND_STROKE;
+    tmp.path = path;
+    tmp.has_stroke = true;
+    tmp.rng_key = key;
+    return emit_memo(m, s, &tmp, pw, st, t, extra, nextra);
+}
+
+// A plane's grid, line or vector at `at` (docs/plane.md): mapped through M, then
+// stroked; the clip box [clo, chi] is the frame in the plane's px.
+static bool emit_plane_child(ani_mesh *m, const an_scene *s, an_obj *c, ani_affine pw, int target, float chaos,
+                             float rest, ani_time at, const ani_map *pm, an_vec2 clo, an_vec2 chi) {
+    const float opacity = (float)ani_sample(ani_obj_prop(c, AN_PROP_OPACITY), at).v[0];
+    emit_style st = sample_style(s, c, chaos, at);
+    int t = target;
+    if (m->force_isolate || opacity < 1.0f || (st.stroke.a < 1.0f && target == ANI_TARGET_MAIN)) {
+        t = layer_new(m, target, opacity, c);
+        if (t < 0) return false;
+    }
+    // grow the box so line ends (with ink and boil) sit off-screen
+    const float sc = sqrtf(fabsf(pw.a * pw.d - pw.b * pw.c));
+    const float g = (st.stroke_width * 0.5f + s->style.boil + 2.0f) / (sc > 0.0f ? sc : 1.0f);
+    const an_vec2 lo = { clo.x - g, clo.y - g }, hi = { chi.x + g, chi.y + g };
+    struct { float mat[4]; int axis, k; an_vec2 a, b; } key = { { pm->m[0], pm->m[1], pm->m[2], pm->m[3] }, 0, 0, { 0, 0 }, { 0, 0 } };
+    if (c->kind == AN_KIND_PLANE_GRID) {
+        ani_grid_seg seg[ANI_PLANE_MAX_LINES + 2];
+        const int n = ani_plane_grid(c, pm, lo, hi, seg, ANI_PLANE_MAX_LINES + 2);
+        for (int i = 0; i < n; i++) {
+            key.axis = seg[i].axis;
+            key.k = seg[i].k;
+            key.a = seg[i].a;
+            key.b = seg[i].b;
+            const uint64_t rk = ani_rng_part_key(c->rng_key, seg[i].axis ? "grid y" : "grid x",
+                                                 (uint64_t)((int64_t)seg[i].k + 0x80000000LL));
+            if (!emit_plane_seg(m, s, c, rk, pw, t, &st, seg[i].a, seg[i].b, &key, sizeof key)) return false;
+        }
+        return true;
+    }
+    if (c->kind == AN_KIND_PLANE_LINE) {
+        if (!ani_plane_line_seg(c, pm, lo, hi, &key.a, &key.b)) return true;
+        return emit_plane_seg(m, s, c, c->rng_key, pw, t, &st, key.a, key.b, &key, sizeof key);
+    }
+    // a vector: the shaft to the head's base, then the head on the tip frame
+    an_vec2 tip, dir;
+    float hs;
+    ani_plane_vector_geom(c, pm, at, &tip, &dir, &hs);
+    const an_vec2 end = { tip.x - dir.x * 10.0f * hs, tip.y - dir.y * 10.0f * hs };
+    key.a = tip;
+    key.b = dir;
+    const float len = sqrtf(end.x * end.x + end.y * end.y);
+    if (len > 0.0f && !emit_plane_seg(m, s, c, c->rng_key, pw, t, &st, (an_vec2){ 0, 0 }, end, &key, sizeof key))
+        return false;
+    const ani_affine tipf = ani_affine_mul(pw, (ani_affine){ dir.x * hs, dir.y * hs, -dir.y * hs, dir.x * hs, tip.x, tip.y });
+    return !c->first_child || visit_children(m, s, c, tipf, t, chaos, rest, at);
+}
+
 // pchaos: effective chaos of the parent (scene dial x multipliers down the tree)
 // prest: the parent's area scale on screen without verbs (camera zoom x scales):
 // the text size factor's "rest" scale (docs/camera.md, (d))
@@ -1108,6 +1186,22 @@ static bool visit_children(ani_mesh *m, const an_scene *s, const an_obj *parent,
     // consecutive letters batch into one draw (docs/text.md, problem 3); anything
     // else, an isolated letter, or a letter with children ends the batch
     const int gbase = m->glyph_count;
+    // a plane's children: its matrix at this frame, and the frame as a clip box in
+    // its own px (docs/plane.md)
+    const bool in_plane = parent->kind == AN_KIND_PLANE;
+    ani_map pmap = { 0 };
+    an_vec2 clo = { 0, 0 }, chi = { 0, 0 };
+    if (in_plane) {
+        pmap = ani_plane_map_at(parent, at);
+        const ani_affine inv = affine_inverse(pw);
+        const an_vec2 q[4] = { { -m->cam_dx, -m->cam_dy }, { m->frame_w - m->cam_dx, -m->cam_dy },
+                               { m->frame_w - m->cam_dx, m->frame_h - m->cam_dy }, { -m->cam_dx, m->frame_h - m->cam_dy } };
+        for (int k = 0; k < 4; k++) {
+            const an_vec2 p = ani_affine_apply(inv, q[k]);
+            clo = k ? (an_vec2){ fminf(clo.x, p.x), fminf(clo.y, p.y) } : p;
+            chi = k ? (an_vec2){ fmaxf(chi.x, p.x), fmaxf(chi.y, p.y) } : p;
+        }
+    }
     for (int i = 0; i < n; i++) {
         an_obj *c = m->scratch[base + i].obj; // re-read: scratch may have moved
         const float opacity = (float)ani_sample(ani_obj_prop(c, AN_PROP_OPACITY), at).v[0];
@@ -1120,8 +1214,12 @@ static bool visit_children(ani_mesh *m, const an_scene *s, const an_obj *parent,
         const ani_value vs = ani_sample(ani_obj_prop(c, AN_PROP_VERB_SCALE), at);
         const ani_value vr = ani_sample(ani_obj_prop(c, AN_PROP_VERB_ROTATION), at);
         const an_vec2 vscale = { (float)vs.v[0], (float)vs.v[1] };
-        const bool verb = !(vscale.x == 1.0f && vscale.y == 1.0f && vr.v[0] == 0.0);
-        ani_affine local = ani_local((an_vec2){ (float)pos.v[0], (float)pos.v[1] }, scale, (float)rot.v[0]);
+        bool verb = !(vscale.x == 1.0f && vscale.y == 1.0f && vr.v[0] == 0.0);
+        an_vec2 lpos = { (float)pos.v[0], (float)pos.v[1] };
+        const bool mapped = in_plane && ani_plane_mapped_kind(c);
+        if (in_plane && !mapped) lpos = ani_map_point(&pmap, lpos); // anchored: pos -> M pos, shape upright
+        ani_affine local = mapped ? (ani_affine){ 1, 0, 0, 1, 0, 0 } : ani_local(lpos, scale, (float)rot.v[0]);
+        if (mapped) verb = false;
         if (verb) {
             const ani_value vp = ani_sample(ani_obj_prop(c, AN_PROP_VERB_PIVOT), at);
             local = ani_verb_local(local, vscale, (float)vr.v[0], (an_vec2){ (float)vp.v[0], (float)vp.v[1] });
@@ -1184,7 +1282,8 @@ static bool visit_children(ani_mesh *m, const an_scene *s, const an_obj *parent,
         const bool drawable = c->kind != AN_KIND_GROUP && c->kind != AN_KIND_TEXT && c->kind != AN_KIND_CODE &&
                               c->kind != AN_KIND_ARRAY && c->kind != AN_KIND_CALLOUT && c->kind != AN_KIND_NODE &&
                               c->kind != AN_KIND_AXES && c->kind != AN_KIND_EDGE && c->kind != AN_KIND_GRAPH &&
-                              c->kind != AN_KIND_TEXT_VERSION;
+                              c->kind != AN_KIND_TEXT_VERSION && c->kind != AN_KIND_PLANE &&
+                              !ani_plane_mapped_kind(c);
         if (drawable) st = sample_style(s, c, chaos, at);
         // Isolate when the node fades as a unit, or (outside any layer) when a
         // translucent paint needs stencil coverage. docs/layers.md
@@ -1199,6 +1298,10 @@ static bool visit_children(ani_mesh *m, const an_scene *s, const an_obj *parent,
         if (isolate) {
             t = layer_new(m, target, opacity, c);
             if (t < 0) return false;
+        }
+        if (mapped) {
+            if (!emit_plane_child(m, s, c, pw, t, chaos, rest, at, &pmap, clo, chi)) return false;
+            continue;
         }
         if (c->kind == AN_KIND_EDGE) {
             // resolved from its nodes at this frame (docs/graphs.md): the path lives
@@ -1261,6 +1364,8 @@ bool ani_tess_scene(ani_mesh *m, const an_scene *s, int64_t frame) {
     const ani_camera cam = ani_camera_at((an_scene *)s, at); // sampling only reads
     ani_affine root = { 1, 0, 0, 1, 0, 0 };
     m->cam_dx = m->cam_dy = 0.0f;
+    m->frame_w = w;
+    m->frame_h = h;
     m->max_screen_scale = 0.0f;
     m->snapped_letters = 0;
     // view = translate(center - shake) rotate(-rot) scale(zoom) translate(-pos): the

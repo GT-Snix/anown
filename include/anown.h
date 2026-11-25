@@ -152,6 +152,10 @@ typedef enum an_kind {
     AN_KIND_AXES,    /* axes (an_axes): a group of axis lines, ticks and labels */
     AN_KIND_GRAPH,   /* a graph (an_graph): a group owning its nodes and edges */
     AN_KIND_TEXT_VERSION, /* one version of a text's letters (an_text_set); internal */
+    AN_KIND_PLANE,        /* a linear-transformation plane (an_plane): a group */
+    AN_KIND_PLANE_GRID,   /* its grid (internal: lines generated per frame) */
+    AN_KIND_PLANE_LINE,   /* an infinite line in the plane (an_plane_line) */
+    AN_KIND_PLANE_VECTOR, /* an arrow from the plane's origin (an_plane_vector) */
 } an_kind;
 
 typedef struct an_obj an_obj;
@@ -471,6 +475,7 @@ typedef enum an_prop {
     AN_PROP_VERB_ROTATION,   /* radians, default 0 */
     AN_PROP_VERB_PIVOT,      /* local units, step; default the object's center */
     AN_PROP_STATE,      /* named state (an_state): array cells, nodes, edges; step */
+    AN_PROP_MATRIX,     /* planes: the 2x2 matrix {a, b, c, d}; default identity; entrywise */
     AN_PROP_COUNT
 } an_prop;
 
@@ -880,6 +885,41 @@ typedef struct an_text_set_opts {
     float gap;             /* LETTERS: seconds between letters; default 0.03 */
 } an_text_set_opts;
 an_anim an_text_set(an_obj *text, const char *str, const an_text_set_opts *opts);
+
+/* ---- the plane (docs/plane.md) ------------------------------------------ */
+
+/* A plane: a group whose content lives in plane units (x right, y UP), mapped
+ * through its 2x2 matrix M every frame. Grid, axes, vectors and lines are mapped
+ * point by point BEFORE stroking, so ink width, boil and riso stay the same on
+ * screen. Any other child is anchored: its pos (plane units) maps to M pos and
+ * its shape stays upright (labels, dots, rings). Mapped geometry is clipped to
+ * the frame. M interpolates entrywise (a rotation animated in one step shrinks
+ * mid-way: use keyframes). */
+typedef struct an_mat2 { float a, b, c, d; } an_mat2; /* [[a, b], [c, d]] */
+#define AN_MAT2_IDENTITY ((an_mat2){ 1, 0, 0, 1 })
+typedef struct an_plane_opts {
+    AN_OBJ_FIELDS          /* pos: the origin (default the frame center); stroke /
+                              stroke_width: the grid's ink (default faded ink, 2) */
+    float unit;            /* px per plane unit; default 100 x height / 1080 */
+    float grid_step;       /* plane units between grid lines; default 1; < 0: no grid */
+    bool axes;             /* the two axes, thicker, through the origin */
+    float grid_chaos;      /* the grid's chaos multiplier; default 0.3 (it never casts a shadow) */
+} an_plane_opts;
+an_obj *an_plane(an_scene *s, const an_plane_opts *opts);
+an_anim an_plane_matrix_to(an_obj *plane, an_mat2 m, const an_anim_opts *opts);
+void an_plane_set_matrix(an_obj *plane, an_mat2 m);
+an_mat2 an_plane_matrix_at_cursor(const an_obj *plane);
+/* A plane point to scene space, with M and the plane's transform at the cursor. */
+an_vec2 an_plane_point_at_cursor(const an_obj *plane, an_vec2 p);
+/* An arrow from the origin to M v. v is the object's pos (plane units), turned by
+ * its rotation (clockwise, as everywhere) and scaled by its scale, so
+ * an_move_to / an_rotate_to animate v. Filled head; opts->from / to are ignored. */
+an_obj *an_plane_vector(an_obj *plane, an_vec2 v, const an_arrow_opts *opts);
+/* The infinite line through p along dir, mapped and clipped to the frame; a dot
+ * at M p if M crushes dir. */
+an_obj *an_plane_line(an_obj *plane, an_vec2 p, an_vec2 dir, const an_line_opts *opts);
+/* An anchored dot at p (default radius 7). */
+an_obj *an_plane_dot(an_obj *plane, an_vec2 p, const an_circle_opts *opts);
 
 /* Start at the cursor and move the cursor to the animation's end. */
 an_handle an_play(an_scene *s, an_anim a);

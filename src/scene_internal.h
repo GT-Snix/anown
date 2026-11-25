@@ -150,6 +150,17 @@ struct an_obj {
             int tn, tcap;
             an_layout_opts layout;
         } graph;
+        // AN_KIND_PLANE (docs/plane.md)
+        struct {
+            float m[4];            // BASE matrix {a, b, c, d}
+            float unit;            // px per plane unit
+            float grid_step;
+        } plane;
+        // AN_KIND_PLANE_LINE / AN_KIND_PLANE_VECTOR (the vector's v is its pos / rotation / scale)
+        struct {
+            an_vec2 p, dir;
+            an_obj *head;
+        } pmark;
         // AN_KIND_AXES (docs/graphs.md)
         struct {
             an_vec2 size;

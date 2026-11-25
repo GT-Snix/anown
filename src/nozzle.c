@@ -2,6 +2,8 @@
 // (path, frame): nothing here writes to the object or the scene.
 #include "stroke_internal.h"
 #include "timeline_internal.h"
+#include "plane_internal.h"
+#include "rng_internal.h"
 
 #include <math.h>
 
@@ -9,7 +11,14 @@
 // from the top level down. In world coordinates: the camera isn't applied.
 ani_affine ani_obj_world_at(an_obj *o, ani_time at) {
     if (!o->parent) return (ani_affine){ 1, 0, 0, 1, 0, 0 };
-    const ani_value pos = ani_sample(ani_obj_prop(o, AN_PROP_POS), at);
+    ani_value pos = ani_sample(ani_obj_prop(o, AN_PROP_POS), at);
+    if (o->parent->kind == AN_KIND_PLANE) { // docs/plane.md
+        if (ani_plane_mapped_kind(o)) return ani_obj_world_at(o->parent, at); // mapped point by point
+        const ani_map m = ani_plane_map_at(o->parent, at);                   // anchored: pos -> M pos
+        const an_vec2 q = ani_map_point(&m, (an_vec2){ (float)pos.v[0], (float)pos.v[1] });
+        pos.v[0] = q.x;
+        pos.v[1] = q.y;
+    }
     const ani_value sc = ani_sample(ani_obj_prop(o, AN_PROP_SCALE), at);
     const ani_value rot = ani_sample(ani_obj_prop(o, AN_PROP_ROTATION), at);
     const ani_value vs = ani_sample(ani_obj_prop(o, AN_PROP_VERB_SCALE), at);

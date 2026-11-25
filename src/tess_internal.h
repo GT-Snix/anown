@@ -111,6 +111,7 @@ typedef struct ani_mesh {
     // the world transforms: it's this per-draw offset (scene px), so cache keys
     // don't change while the camera pans or shakes.
     float cam_dx, cam_dy;
+    float frame_w, frame_h; // the frame being tessellated (the plane's clip box)
     bool cam_fast_off;      // benchmarks: always put the camera in the world transform
     // the largest scale on screen of any drawn object this frame (largest
     // singular value of its world transform), for the max_zoom warning

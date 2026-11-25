@@ -123,6 +123,22 @@ bool    ani_map_path(const ani_map *, const ani_path *, ani_arena *, ani_path **
   over unchanged.
 - The matrix property would become 9 components then; it's 4 now.
 
+## As implemented (2026-11-25)
+
+- **The grid range is always clamped to the identity range × 4**, not only
+  when M is singular. So the line set changes continuously as det → 0; the
+  singular frame uses the same box. A plane shrunk more than 4× shows the
+  grid's edge.
+- **No "message once" past 400 lines.** It would need a flag written while
+  rendering; it takes every k-th line, silently.
+- **A crushed vector takes its own unmapped direction** (then +x), not "the
+  last valid one". That would carry state between frames, against rule 9.
+- **A vector's v is its pos, turned by its rotation** (clockwise on screen, as
+  everywhere) **and scaled by its scale.** So `an_move_to` / `an_rotate_to`
+  animate it.
+- **The grid has riso and shadow off.** Its ink is 75% of the way from ink to
+  paper, 2 px.
+
 ## Gates and tests (hand-computed)
 
 - **The identity is byte-identical.** At M = I:
