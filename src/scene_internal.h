@@ -73,7 +73,25 @@ struct an_obj {
             float total_arc;       // sum of the letters' outline lengths (draw-on)
             bool size_chaos;       // chaos x the stem-width factor
             bool inked;            // letters have outlines: draw-on by arc length
+            const void *params, *style; // layout and paint for an_text_set (text.c)
+            int *seq, *seq_letter, nseq;  // the creation string's diff sequence (see tver)
+            an_obj **versions;     // an_text_set: version nodes (0: the creation string); 0 until then
+            int nver, vcap;
         } text;
+        // AN_KIND_TEXT_VERSION: a version of a text's letters (docs/api-fixes.md item 2)
+        struct {
+            an_obj *text;
+            an_obj **glyphs;
+            int n;                 // letters
+            float total_arc;
+            int *seq, nseq;        // laid-out glyph ids, -1 at line breaks (for the diff)
+            int *seq_letter;       // per seq entry: the letter index, or -1 (space, break)
+            int64_t start;         // ticks when its an_text_set plays; -1 until then (0 for version 0)
+            int64_t live_to;       // after this it's never seen again (INT64_MAX: still current)
+            an_text_change mode;
+            float stagger, gap;
+            int *match;            // LETTERS: per letter, the previous version's letter it continues, or -1
+        } tver;
         // AN_KIND_GLYPH: one letter. Its path is the glyph's cached outline scaled
         // to the size, with the pivot at the local origin; pos = pen + pivot.
         struct {

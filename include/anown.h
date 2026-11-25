@@ -151,6 +151,7 @@ typedef enum an_kind {
     AN_KIND_EDGE,    /* a graph edge (an_edge): endpoints resolved from its nodes each frame */
     AN_KIND_AXES,    /* axes (an_axes): a group of axis lines, ticks and labels */
     AN_KIND_GRAPH,   /* a graph (an_graph): a group owning its nodes and edges */
+    AN_KIND_TEXT_VERSION, /* one version of a text's letters (an_text_set); internal */
 } an_kind;
 
 typedef struct an_obj an_obj;
@@ -280,6 +281,7 @@ typedef struct an_text_opts {
 
 /* Letters of a text, in string order (spaces and line breaks excluded). */
 int an_text_length(const an_obj *text);
+
 an_obj *an_text_glyph(const an_obj *text, int i); /* NULL if out of range */
 
 /* A code block (docs/text.md): monospace text on a grid, optional line
@@ -511,7 +513,7 @@ typedef struct an_verb_opts {
  * and an_array_swap). */
 typedef enum an_verb_kind { AN_VERB_NONE = 0, AN_VERB_SLAP, AN_VERB_POP, AN_VERB_SQUASH, AN_VERB_SWAP,
                             AN_VERB_CODE_GOTO, AN_VERB_CELL_STATE, AN_VERB_NODE_STATE, AN_VERB_EDGE_STATE,
-                            AN_VERB_PATH, AN_VERB_MOVES } an_verb_kind;
+                            AN_VERB_PATH, AN_VERB_MOVES, AN_VERB_TEXT_SET } an_verb_kind;
 
 typedef struct an_anim {
     an_obj *obj;
@@ -530,6 +532,8 @@ typedef struct an_anim {
                               state verbs: the state in swap_j; an_highlight_path: count in swap_i */
     an_obj **objs;         /* an_highlight_path, an_layout_animate: the objects (a copy in the scene) */
     an_vec2 *points;       /* an_layout_animate: the targets (a copy in the scene) */
+    bool failed;           /* made by a call that failed (an_text_set past its limit):
+                              playing it records nothing (see an_anim_ok) */
     float gap;             /* an_highlight_path: seconds between objects */
 } an_anim;
 
@@ -702,7 +706,10 @@ an_anim an_array_point(an_obj *pointer, int slot, const an_anim_opts *opts);
 typedef struct an_handle {
     an_scene *scene;
     double start, end;
+    bool ok;               /* false: the anim had failed (nothing was recorded) */
 } an_handle;
+/* False if the call that made `a` failed (with a message); playing it records nothing. */
+bool an_anim_ok(an_anim a);
 
 /* ---- graphs (docs/graphs.md) ------------------------------------------- */
 
@@ -852,6 +859,27 @@ typedef struct an_path_opts {
     an_ease ease;
 } an_path_opts;
 an_anim an_highlight_path(an_obj *const *nodes, int n, an_state state, const an_path_opts *opts);
+
+/* Change a text's string on the timeline (docs/api-fixes.md, item 2). The new
+ * string is laid out with the text's own font, size, alignment, anchor and
+ * kerning at this call (the cursor), as a new version of its letters; playing the
+ * anim switches to it. Queries (an_text_length, an_text_glyph, bounds) answer for
+ * the latest version played by the cursor. At most 256 versions per text: past
+ * that the call fails (a message naming the text; an_anim_ok is false).
+ *   CROSSFADE: old out, new in; each fade lasts duration / (1 + stagger), the
+ *     fade-in starting stagger x that after the fade-out (0: together; 1: out,
+ *     then in).
+ *   LETTERS: letters matched by longest common subsequence (ties drop the old
+ *     letter: repeats match their latest copies) glide to their new place; the
+ *     rest fade out / in, `gap` apart. */
+typedef enum an_text_change { AN_TEXT_CROSSFADE = 0, AN_TEXT_LETTERS } an_text_change;
+typedef struct an_text_set_opts {
+    an_anim_opts anim;     /* default 0.3 s */
+    an_text_change mode;
+    float stagger;         /* CROSSFADE: 0..1, default 0 */
+    float gap;             /* LETTERS: seconds between letters; default 0.03 */
+} an_text_set_opts;
+an_anim an_text_set(an_obj *text, const char *str, const an_text_set_opts *opts);
 
 /* Start at the cursor and move the cursor to the animation's end. */
 an_handle an_play(an_scene *s, an_anim a);

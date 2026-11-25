@@ -510,7 +510,9 @@ static float sample_glyph(ani_mesh *m, const an_scene *s, an_obj *c, ani_affine 
     const float wscale = sqrtf(fabsf(w.a * w.d - w.b * w.c)); // with verbs: the ink's scale
     chaos *= ani_text_size_factor(c, rest, sty->boil_off ? 0.0f : sty->boil);
     an_obj *text = c->u.glyph.text;
-    const bool in_text = c->parent == text;
+    // in its text, directly or in one of its versions (identity nodes)
+    const bool versioned = c->parent->kind == AN_KIND_TEXT_VERSION && c->parent->parent == text;
+    const bool in_text = c->parent == text || versioned;
     // calm letters sit on whole pixels relative to the text's origin
     if (chaos == 0.0f && in_text && plain && ani_text_snap(pw, &w, c->u.glyph.pen, 0.0f, (an_vec2){ 1, 1 }))
         m->snapped_letters++;
@@ -526,14 +528,15 @@ static float sample_glyph(ani_mesh *m, const an_scene *s, an_obj *c, ani_affine 
         float local = 1.0f;
         if (D < 1.0f) {
             const float len = c->path ? c->path->total : 0.0f;
-            local = len > 0.0f ? (D * text->u.text.total_arc - c->u.glyph.arc0) / len : (D > 0.0f ? 1.0f : 0.0f);
+            const float total = versioned ? c->parent->u.tver.total_arc : text->u.text.total_arc;
+            local = len > 0.0f ? (D * total - c->u.glyph.arc0) / len : (D > 0.0f ? 1.0f : 0.0f);
             local = local < 0.0f ? 0.0f : local > 1.0f ? 1.0f : local;
         }
         st.draw = own < local ? own : local;
         shown = st.draw > 0.0f;
     } else {
         // typewriter: whole letters in order; the letter's own draw must be complete
-        const int n = text->u.text.nglyphs;
+        const int n = versioned ? c->parent->u.tver.n : text->u.text.nglyphs;
         shown = (D >= 1.0f || D * (float)n >= (float)(c->u.glyph.index + 1)) && own >= 1.0f;
     }
     g->fill_on = shown && has_fill(c, &st) && st.draw >= 1.0f;
@@ -1061,9 +1064,12 @@ static void merge_runs(ani_mesh *m) {
 
 // Does any letter of a text have a translucent paint at `at`? (Outside a layer
 // the whole text is then isolated: one layer, not one per letter.)
+// t: a text, or one of its versions (its own letters)
 static bool text_translucent(const an_scene *s, const an_obj *t, ani_time at) {
-    for (int i = 0; i < t->u.text.nglyphs; i++) {
-        an_obj *g = t->u.text.glyphs[i];
+    const bool ver = t->kind == AN_KIND_TEXT_VERSION;
+    const int n = ver ? t->u.tver.n : t->u.text.nglyphs;
+    for (int i = 0; i < n; i++) {
+        an_obj *g = ver ? t->u.tver.glyphs[i] : t->u.text.glyphs[i];
         if (g->parent != t) continue;
         const float fa = (float)ani_sample(ani_obj_prop(g, AN_PROP_FILL), at).v[3];
         const float sa = (float)ani_sample(ani_obj_prop(g, AN_PROP_STROKE), at).v[3];
@@ -1090,6 +1096,7 @@ static bool visit_children(ani_mesh *m, const an_scene *s, const an_obj *parent,
     const int base = m->scratch_count;
     for (an_obj *c = parent->first_child; c; c = c->next_sibling) {
         if (!ani_obj_exists(c, at) || c->never_drawn) continue; // not created yet / never drawn: skip the subtree
+        if (c->kind == AN_KIND_TEXT_VERSION && !ani_text_version_live(c, at)) continue; // unplayed, or long faded
         if (!grow((void **)&m->scratch, &m->scratch_cap, m->scratch_count + 1, sizeof(ani_draw_item)))
             return false;
         const int z = (int)ani_sample(ani_obj_prop(c, AN_PROP_Z), at).v[0];
@@ -1176,7 +1183,8 @@ static bool visit_children(ani_mesh *m, const an_scene *s, const an_obj *parent,
         emit_style st = { 0 };
         const bool drawable = c->kind != AN_KIND_GROUP && c->kind != AN_KIND_TEXT && c->kind != AN_KIND_CODE &&
                               c->kind != AN_KIND_ARRAY && c->kind != AN_KIND_CALLOUT && c->kind != AN_KIND_NODE &&
-                              c->kind != AN_KIND_AXES && c->kind != AN_KIND_EDGE && c->kind != AN_KIND_GRAPH;
+                              c->kind != AN_KIND_AXES && c->kind != AN_KIND_EDGE && c->kind != AN_KIND_GRAPH &&
+                              c->kind != AN_KIND_TEXT_VERSION;
         if (drawable) st = sample_style(s, c, chaos, at);
         // Isolate when the node fades as a unit, or (outside any layer) when a
         // translucent paint needs stencil coverage. docs/layers.md
@@ -1184,8 +1192,8 @@ static bool visit_children(ani_mesh *m, const an_scene *s, const an_obj *parent,
                                              (has_ink(c, &st) && st.stroke.a < 1.0f) ||
                                              (st.shadow && st.shadow_color.a < 1.0f &&
                                               (has_fill(c, &st) || has_ink(c, &st))))
-                                          : c->kind == AN_KIND_TEXT && target == ANI_TARGET_MAIN &&
-                                                text_translucent(s, c, at);
+                                          : (c->kind == AN_KIND_TEXT || c->kind == AN_KIND_TEXT_VERSION) &&
+                                                target == ANI_TARGET_MAIN && text_translucent(s, c, at);
         const bool isolate = m->force_isolate || opacity < 1.0f || (translucent && target == ANI_TARGET_MAIN);
         int t = target;
         if (isolate) {

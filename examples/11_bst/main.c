@@ -29,13 +29,20 @@ static int count;
 // the tree's layout: root at the top middle, 120 px between in-order neighbors
 static const an_layout_opts LAYOUT = { .spacing = { 120, 105 }, .origin = { 960, 300 } };
 
-// a caption at the top: the old one fades out, the new one fades in
+// a caption at the top: made once, then changed on the timeline. "insert 42" ->
+// "insert 17" keeps "insert " still and swaps the digits (LETTERS); anything else
+// crossfades.
 static an_obj *caption;
-static void say(const char *text) {
-    if (caption) an_play_async(S, an_fade_to(caption, 0, &(an_anim_opts){ .duration = 0.2f }));
-    caption = an_text(S, &(an_text_opts){ .text = text, .pos = { 960, 150 }, .size = 52, .align = AN_ALIGN_CENTER,
-                                          .anchor = AN_ANCHOR_MIDDLE, .font = an_font_mono(S), .hidden = true });
-    an_play(S, an_fade_to(caption, 1, &(an_anim_opts){ .duration = 0.2f }));
+static void say(const char *text, an_text_change mode) {
+    if (!caption) {
+        caption = an_text(S, &(an_text_opts){ .text = text, .pos = { 960, 150 }, .size = 52, .align = AN_ALIGN_CENTER,
+                                              .anchor = AN_ANCHOR_MIDDLE, .font = an_font_mono(S), .hidden = true });
+        an_play(S, an_fade_to(caption, 1, &(an_anim_opts){ .duration = 0.2f }));
+        return;
+    }
+    // the change runs on (the last digit lands a gap later) while the next step starts
+    an_play_async(S, an_text_set(caption, text, &(an_text_set_opts){ .mode = mode, .anim = { .duration = 0.2f } }));
+    an_wait(S, 0.2f);
 }
 
 static int height(void) {
@@ -48,7 +55,7 @@ static void insert(int k) {
     const int me = count;
     char buf[64];
     snprintf(buf, sizeof buf, "insert %d", k);
-    say(buf);
+    say(buf, AN_TEXT_LETTERS);
 
     // walk down from the root, recording the path of nodes
     an_obj *path[N];
@@ -127,7 +134,7 @@ int main(int argc, char **argv) {
         ns[i] = (float)(i + 1);
         heights[i] = (float)height();
     }
-    say("height: the longest root-to-leaf path");
+    say("height: the longest root-to-leaf path", AN_TEXT_CROSSFADE);
     an_wait(S, 1.2f);
 
     // the plot

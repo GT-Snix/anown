@@ -175,6 +175,25 @@ an_anim an_text_set(an_obj *text, const char *str, const an_text_set_opts *opts)
     A centered string whose width changes slides its kept letters, not
     flickers.
 
+**As implemented** (differences from the text above):
+- **Matched letters are copies, not the old objects.** Reparenting is
+  structural (it applies to the whole timeline), so a letter can't belong to
+  the old version before the change and the new one after.
+  - A matched letter in the new version copies its old letter's random key, so
+    its boil is identical.
+  - At the start, the old letter steps to opacity 0 and the new one to 1, at
+    the old letter's place. The swap is invisible, and the new letter glides to
+    its slot.
+- **Version 0 moves into a version node** born with the text, on its first
+  `an_text_set`. Reparenting keeps the letters' keys, and the node is an
+  identity transform. Verified: the reference frames and quicksort are
+  identical, and 11_bst is identical up to its first change.
+- **Failure:** `an_anim.failed` and `an_anim_ok`; `an_handle.ok` (false for a
+  failed anim, or for an `an_par` / `an_stagger` containing one).
+- **Unplayed changes:** a change made but never played is never drawn, and
+  queries ignore it. Playing the same change twice records nothing the second
+  time, with a message.
+
 **Tests:**
 - Version 0 unchanged: existing text tests and reference frames are
   identical.

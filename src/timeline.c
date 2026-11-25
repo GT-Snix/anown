@@ -740,6 +740,7 @@ an_anim an_squash_stretch(an_obj *o, const an_verb_opts *opts) { return verb(o, 
 
 // Record `a` starting at `start`; returns its end (or start if it can't run).
 int64_t ani_record_anim(an_scene *s, const an_anim *a, int64_t start) {
+    if (a->failed) return start; // its call failed (and said so): nothing to record
     if (!s) return start;
     // the target: an object, or the scene itself
     ani_prop_ref ref;
@@ -762,6 +763,7 @@ int64_t ani_record_anim(an_scene *s, const an_anim *a, int64_t start) {
     if ((a->verb == AN_VERB_NODE_STATE || a->verb == AN_VERB_EDGE_STATE) && a->obj) return ani_graph_record_state(s, a, start);
     if (a->verb == AN_VERB_PATH && a->obj) return ani_graph_record_path(s, a, start);
     if (a->verb == AN_VERB_MOVES && a->obj) return ani_graph_record_moves(s, a, start);
+    if (a->verb == AN_VERB_TEXT_SET && a->obj) return ani_text_record_set(s, a, start);
     if (a->verb != AN_VERB_NONE && a->obj) return record_verb(s, a, start);
     const bool spring = a->opts.ease.kind == AN_EASE_KIND_SPRING;
     int64_t duration = ani_ticks(a->opts.duration);
@@ -773,23 +775,25 @@ int64_t ani_record_anim(an_scene *s, const an_anim *a, int64_t start) {
                       a->has_from ? &from : NULL);
 }
 
-static an_handle handle(an_scene *s, int64_t start, int64_t end) {
+static an_handle handle(an_scene *s, int64_t start, int64_t end, bool ok) {
     return (an_handle){ .scene = s, .start = (double)start / (double)ANI_TICKS_PER_SEC,
-                        .end = (double)end / (double)ANI_TICKS_PER_SEC };
+                        .end = (double)end / (double)ANI_TICKS_PER_SEC, .ok = ok };
 }
+
+bool an_anim_ok(an_anim a) { return !a.failed; }
 
 an_handle an_play(an_scene *s, an_anim a) {
     if (!s) return (an_handle){ 0 };
     const int64_t start = s->cursor;
     const int64_t end = ani_record_anim(s, &a, start);
     if (end > s->cursor) s->cursor = end;
-    return handle(s, start, end > start ? end : start);
+    return handle(s, start, end > start ? end : start, !a.failed);
 }
 
 an_handle an_play_async(an_scene *s, an_anim a) {
     if (!s) return (an_handle){ 0 };
     const int64_t end = ani_record_anim(s, &a, s->cursor);
-    return handle(s, s->cursor, end > s->cursor ? end : s->cursor);
+    return handle(s, s->cursor, end > s->cursor ? end : s->cursor, !a.failed);
 }
 
 void an_wait_until(an_handle h) {
@@ -811,12 +815,14 @@ an_handle an_stagger(an_scene *s, int n, const an_anim *anims, float gap_seconds
     if (!s || !anims) return (an_handle){ 0 };
     const int64_t gap = ani_ticks(gap_seconds), start = s->cursor;
     int64_t latest = s->cursor;
+    bool ok = true;
     for (int i = 0; i < n; i++) {
         const int64_t end = ani_record_anim(s, &anims[i], s->cursor + (int64_t)i * gap);
         if (end > latest) latest = end;
+        ok = ok && !anims[i].failed;
     }
     s->cursor = latest;
-    return handle(s, start, latest);
+    return handle(s, start, latest, ok);
 }
 
 // ---- public: time, seeking -----------------------------------------------------------------

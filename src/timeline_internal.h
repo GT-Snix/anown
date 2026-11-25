@@ -89,6 +89,11 @@ int64_t ani_array_record_state(an_scene *s, const an_anim *a, int64_t start);
 int64_t ani_graph_record_state(an_scene *s, const an_anim *a, int64_t start);
 int64_t ani_graph_record_path(an_scene *s, const an_anim *a, int64_t start);
 int64_t ani_graph_record_moves(an_scene *s, const an_anim *a, int64_t start);
+// text.c: an_text_set (docs/api-fixes.md item 2). The version current at `at`
+// (NULL: the text has no versions); whether a version node can be seen at `at`.
+int64_t ani_text_record_set(an_scene *s, const an_anim *a, int64_t start);
+an_obj *ani_text_current(const an_obj *text, ani_time at);
+bool ani_text_version_live(const an_obj *version, ani_time at);
 // text.c: an_code_goto's tracks.
 int64_t ani_code_record_goto(an_scene *s, const an_anim *a, int64_t start);
 // An object's world transform at a time (without the camera), from the top down.

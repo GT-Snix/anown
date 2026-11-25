@@ -6,10 +6,12 @@
 #include "offscreen_internal.h"
 #include "render_internal.h"
 #include "scene_internal.h"
+#include "timeline_internal.h"
 
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 enum { W = 1280, H = 720 };
 
@@ -134,6 +136,136 @@ static void test_cursor_query(void) {
     an_scene_destroy(s);
 }
 
+// ---- an_text_set (docs/api-fixes.md, item 2) -------------------------------------------------
+
+static an_obj *mono(an_scene *s, const char *str) {
+    return an_text(s, &(an_text_opts){ .text = str, .pos = { 640, 300 }, .size = 60, .font = an_font_mono(s),
+                                       .align = AN_ALIGN_CENTER, .anchor = AN_ANCHOR_MIDDLE });
+}
+
+static double opacity_at(an_obj *o, double sec) {
+    return ani_sample(ani_obj_prop(o, AN_PROP_OPACITY), ani_tick_time((int64_t)llround(sec * 1e6))).v[0];
+}
+
+// CROSSFADE, linear, D 0.3 s: at 0.15 s both versions are at 0.5. Stagger 0.5: each
+// fade is 0.3 / 1.5 = 0.2 s and the fade-in starts at 0.1 s: at 0.1 s old 0.5 new 0;
+// at 0.2 s old 0 new 0.5. Queries: before the change plays, the old text; from its
+// start (mid-crossfade), the new one. After it, the letters sit exactly where a fresh
+// text of the new string puts them, and the bounds are the fresh text's.
+static void test_text_crossfade(void) {
+    an_scene *s = an_scene_create(NULL);
+    an_obj *t = mono(s, "insert 42");
+    const an_anim_opts lin = { .duration = 0.3f, .ease = AN_EASE_LINEAR };
+    an_anim a = an_text_set(t, "height: 3", &(an_text_set_opts){ .anim = lin });
+    CHECK(an_anim_ok(a) && an_text_length(t) == 8); // not played yet: "insert42" (8 letters)
+    an_obj *v0 = t->u.text.versions[0], *v1 = t->u.text.versions[1];
+    const an_handle h = an_play_async(s, a);
+    CHECK(h.ok && an_text_length(t) == 8 && an_text_glyph(t, 0)->parent == v1); // "height:3"
+    CHECK_NEAR(opacity_at(v0, 0.15), 0.5, 1e-6);
+    CHECK_NEAR(opacity_at(v1, 0.15), 0.5, 1e-6);
+    an_wait_until(h);
+    an_play(s, an_text_set(t, "n = 12", &(an_text_set_opts){ .anim = lin, .stagger = 0.5f }));
+    an_obj *v2 = t->u.text.versions[2];
+    CHECK_NEAR(opacity_at(v1, 0.3 + 0.1), 0.5, 1e-6);
+    CHECK_NEAR(opacity_at(v2, 0.3 + 0.1), 0.0, 1e-6);
+    CHECK_NEAR(opacity_at(v1, 0.3 + 0.2), 0.0, 1e-6);
+    CHECK_NEAR(opacity_at(v2, 0.3 + 0.2), 0.5, 1e-6);
+    // where a fresh text of the new string puts its letters, and the same bounds
+    an_obj *fresh = mono(s, "n = 12");
+    CHECK(an_text_length(t) == an_text_length(fresh));
+    for (int k = 0; k < an_text_length(t); k++) {
+        const an_vec2 p = an_text_glyph(t, k)->pos, q = an_text_glyph(fresh, k)->pos;
+        CHECK(p.x == q.x && p.y == q.y);
+    }
+    const an_bounds b = an_obj_bounds_at_cursor(t), c = an_obj_bounds_at_cursor(fresh);
+    CHECK(b.min.x == c.min.x && b.min.y == c.min.y && b.max.x == c.max.x && b.max.y == c.max.y);
+    // the old versions are never seen again after their fades
+    CHECK(!ani_text_version_live(v0, ani_tick_time(300001)) && !ani_text_version_live(v1, ani_tick_time(500001)));
+    CHECK(ani_text_version_live(v2, ani_tick_time(10000000)));
+    an_scene_destroy(s);
+}
+
+// LETTERS, "insert 42" -> "insert 17" (mono, centered; linear 0.3 s, gap 0.03 s): the
+// LCS is "insert " (7); the letters i n s e r t (0..5) are matched with zero movement
+// (same length, same advance); "4", "2" fade out at 0 and 0.03 s, "1", "7" fade in at
+// 0 and 0.03 s. At 0.03 s: old "4" 1 - 0.03/0.3 = 0.9, old "2" 1, new "1" 0.1, new "7" 0.
+// Matched letters take over their old letter's random stream.
+static void test_text_letters(void) {
+    an_scene *s = an_scene_create(NULL);
+    an_obj *t = mono(s, "insert 42");
+    an_play(s, an_text_set(t, "insert 17", &(an_text_set_opts){ .mode = AN_TEXT_LETTERS,
+                                                                .anim = { .duration = 0.3f, .ease = AN_EASE_LINEAR } }));
+    an_obj *v0 = t->u.text.versions[0], *v1 = t->u.text.versions[1];
+    for (int k = 0; k < 6; k++) {
+        CHECK(v1->u.tver.match[k] == k);
+        an_obj *o = v0->u.tver.glyphs[k], *n = v1->u.tver.glyphs[k];
+        CHECK(o->pos.x == n->pos.x && o->pos.y == n->pos.y && o->rng_key == n->rng_key);
+    }
+    CHECK(v1->u.tver.match[6] == -1 && v1->u.tver.match[7] == -1);
+    CHECK_NEAR(opacity_at(v0->u.tver.glyphs[6], 0.03), 0.9, 1e-6);
+    CHECK_NEAR(opacity_at(v0->u.tver.glyphs[7], 0.03), 1.0, 1e-6);
+    CHECK_NEAR(opacity_at(v1->u.tver.glyphs[6], 0.03), 0.1, 1e-6);
+    CHECK_NEAR(opacity_at(v1->u.tver.glyphs[7], 0.03), 0.0, 1e-6);
+    // matched letters hand over in place at the start
+    CHECK(opacity_at(v0->u.tver.glyphs[0], 0.0) == 0.0 && opacity_at(v1->u.tver.glyphs[0], 0.0) == 1.0);
+    an_obj *fresh = mono(s, "insert 17");
+    for (int k = 0; k < 8; k++) {
+        const an_vec2 p = an_obj_at_cursor(an_text_glyph(t, k)).pos, q = an_text_glyph(fresh, k)->pos;
+        CHECK(p.x == q.x && p.y == q.y);
+    }
+    an_scene_destroy(s);
+}
+
+// Repeated letters, by hand (docs/api-fixes.md): "abab" -> "ba" keeps old letters 1
+// and 2 (new 0 <- old 1, new 1 <- old 2); "aa" -> "a" keeps old letter 1.
+static void test_text_repeats(void) {
+    an_scene *s = an_scene_create(NULL);
+    an_obj *t = mono(s, "abab");
+    an_play(s, an_text_set(t, "ba", &(an_text_set_opts){ .mode = AN_TEXT_LETTERS }));
+    const an_obj *v = t->u.text.versions[1];
+    CHECK(v->u.tver.match[0] == 1 && v->u.tver.match[1] == 2);
+    an_obj *u = mono(s, "aa");
+    an_play(s, an_text_set(u, "a", &(an_text_set_opts){ .mode = AN_TEXT_LETTERS }));
+    CHECK(u->u.text.versions[1]->u.tver.match[0] == 1);
+    an_scene_destroy(s);
+}
+
+// The limit: 255 sets give 256 versions; the 257th fails with a message naming the
+// text, an_anim_ok false, and playing it records nothing (cursor and versions
+// unchanged, handle not ok); the text still shows the 256th version.
+static void test_text_limit(void) {
+    an_scene *s = an_scene_create(NULL);
+    an_obj *t = an_text(s, &(an_text_opts){ .text = "count 0", .name = "counter", .font = an_font_mono(s) });
+    char buf[32];
+    int ok = 0;
+    for (int k = 1; k <= 255; k++) {
+        snprintf(buf, sizeof buf, "count %d", k);
+        const an_anim a = an_text_set(t, buf, &(an_text_set_opts){ .anim = { .duration = 0.05f } });
+        ok += an_anim_ok(a) && an_play(s, a).ok;
+    }
+    CHECK(ok == 255 && t->u.text.nver == 256);
+    // capture stderr for the failing call
+    fflush(stderr);
+    const int saved = dup(2);
+    FILE *cap = tmpfile();
+    dup2(fileno(cap), 2);
+    const an_anim bad = an_text_set(t, "count 256", NULL);
+    fflush(stderr);
+    dup2(saved, 2);
+    close(saved);
+    char msg[256] = { 0 };
+    rewind(cap);
+    const size_t got = fread(msg, 1, sizeof msg - 1, cap);
+    fclose(cap);
+    CHECK(got > 0 && strstr(msg, "an_text_set on text \"counter\"") && strstr(msg, "256 versions"));
+    CHECK(!an_anim_ok(bad));
+    const double before = an_scene_time(s);
+    const an_handle h = an_play(s, bad);
+    CHECK(!h.ok && h.start == before && h.end == before && an_scene_time(s) == before && t->u.text.nver == 256);
+    CHECK(an_text_length(t) == 8); // "count255"
+    an_scene_destroy(s);
+}
+
 int main(void) {
     // first: frame dumps set up (and shut down) their own Metal context, like
     // an_scene_export and an_scene_save_png
@@ -146,6 +278,10 @@ int main(void) {
     CHECK(ani_renderer_init(&g_r, SG_PIXELFORMAT_RGBA8, SG_PIXELFORMAT_DEPTH_STENCIL, 4));
     test_subtree_keys();
     test_cursor_query();
+    test_text_crossfade();
+    test_text_letters();
+    test_text_repeats();
+    test_text_limit();
     ani_renderer_shutdown(&g_r);
     ani_offscreen_destroy(&g_off);
     ani_gfx_shutdown();

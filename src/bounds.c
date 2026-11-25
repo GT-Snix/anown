@@ -8,6 +8,8 @@
 
 static void add_obj(an_bounds *b, an_obj *o, ani_time at) {
     if (!ani_obj_exists(o, at)) return;
+    // a text that changed: only the version current at `at` counts
+    if (o->kind == AN_KIND_TEXT_VERSION && ani_text_current(o->u.tver.text, at) != o) return;
     if (o->path && o->path->npts > 0) {
         const ani_affine w = ani_obj_world_at(o, at);
         float hw = 0.0f; // half the ink width on screen

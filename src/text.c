@@ -145,39 +145,37 @@ typedef struct text_params {
     float line_pitch; // > 0: exact baseline-to-baseline distance (code blocks)
 } text_params;
 
-static an_obj *make_text(an_scene *s, const ani_common_opts *node, const char *str, const text_params *tp,
-                         const text_style *ts) {
+// The letters of one string, made under `holder` (the text itself, or one of its
+// versions) and laid out for text `t`.
+typedef struct letters {
+    an_obj **glyphs;
+    int n;
+    float total_arc;
+    int *seq, *seq_letter, nseq; // glyph ids in order, -1 per line break; letter index or -1
+    an_vec2 vpivot;              // the block's center
+} letters;
+
+static bool make_letters(an_scene *s, an_obj *t, an_obj *holder, const char *copy, const text_params *tp,
+                         const text_style *ts, letters *out) {
     an_font *f = tp->font;
-    const char *copy = ani_arena_strdup(&s->arena, str);
-    if (!f || !copy) return NULL;
     const float k = tp->size / (float)f->upem;
     layout L = { 0 };
     if (!layout_run(&L, f, copy, k, tp->kerning)) {
         free(L.g);
         free(L.line_w);
-        return NULL;
+        return false;
     }
-    // the node carries the letters' paint too: letters follow its fill, stroke
-    // and stroke width until overridden (docs/text.md)
-    ani_common_opts nopts = *node;
-    nopts.fill = ts->fill;
-    nopts.stroke = ts->stroke;
-    nopts.stroke_width = ts->stroke_width;
-    an_obj *t = ani_obj_make(s, AN_KIND_TEXT, &nopts);
-    an_obj **glyphs = NULL;
     int ng = 0;
     for (int i = 0; i < L.n; i++) ng += ani_font_glyph(f, L.g[i].gi)->path != NULL;
-    if (t) glyphs = ani_arena_alloc(&s->arena, sizeof(an_obj *) * (size_t)(ng ? ng : 1), alignof(an_obj *));
-    if (!t || !glyphs) {
+    an_obj **glyphs = ani_arena_alloc(&s->arena, sizeof(an_obj *) * (size_t)(ng ? ng : 1), alignof(an_obj *));
+    const int nseq = L.n + L.nlines - 1;
+    int *seq = ani_arena_alloc(&s->arena, sizeof(int) * (size_t)(nseq > 0 ? nseq : 1), alignof(int));
+    int *seq_letter = ani_arena_alloc(&s->arena, sizeof(int) * (size_t)(nseq > 0 ? nseq : 1), alignof(int));
+    if (!glyphs || !seq || !seq_letter) {
         free(L.g);
         free(L.line_w);
-        return NULL;
+        return false;
     }
-    t->u.text.str = copy;
-    t->u.text.size = tp->size;
-    t->u.text.font = f;
-    t->u.text.size_chaos = tp->size_chaos;
-    t->u.text.inked = ts->outline;
 
     // vertical: baseline of line i = i * pitch + the anchor offset
     const float pitch = tp->line_pitch > 0.0f
@@ -194,9 +192,15 @@ static an_obj *make_text(an_scene *s, const ani_common_opts *node, const char *s
     }
     const float xh = (float)f->x_height * k;
     float arc = 0.0f;
-    int gi_out = 0;
+    int gi_out = 0, ns = 0, line = 0;
     for (int i = 0; i < L.n; i++) {
+        for (; line < L.g[i].line; line++) { // a break before this glyph's line
+            seq[ns] = -1;
+            seq_letter[ns++] = -1;
+        }
         const ani_glyph *g = ani_font_glyph(f, L.g[i].gi);
+        seq[ns] = L.g[i].gi;
+        seq_letter[ns++] = g->path ? gi_out : -1;
         if (!g->path) continue; // a space: no letter object
         const float lw = L.line_w[L.g[i].line];
         const float ax = tp->align == AN_ALIGN_CENTER ? -lw * 0.5f : tp->align == AN_ALIGN_RIGHT ? -lw : 0.0f;
@@ -204,7 +208,7 @@ static an_obj *make_text(an_scene *s, const ani_common_opts *node, const char *s
         const an_vec2 pivot = { (float)g->advance * k * 0.5f, -xh * 0.5f };
         ani_path *path = glyph_path(&s->arena, g->path, k, pivot);
         an_obj *o = path ? ani_obj_make(s, AN_KIND_GLYPH, &(ani_common_opts){
-                               .parent = t, .pos = { pen.x + pivot.x, pen.y + pivot.y }, .hidden = ts->hidden,
+                               .parent = holder, .pos = { pen.x + pivot.x, pen.y + pivot.y }, .hidden = ts->hidden,
                                .undrawn = ts->undrawn, .fill = ts->fill, .stroke = ts->stroke,
                                .stroke_width = ts->stroke_width, .no_fill = ts->no_fill, .brush = ts->brush,
                                .riso = ts->riso, .shadow = ts->shadow, .pattern = ts->pattern,
@@ -213,7 +217,7 @@ static an_obj *make_text(an_scene *s, const ani_common_opts *node, const char *s
         if (!o) {
             free(L.g);
             free(L.line_w);
-            return NULL;
+            return false;
         }
         o->path = path;
         o->has_stroke = ts->outline;
@@ -228,6 +232,10 @@ static an_obj *make_text(an_scene *s, const ani_common_opts *node, const char *s
         arc += path->total;
         glyphs[gi_out++] = o;
     }
+    for (; line < L.nlines - 1; line++) { // trailing breaks
+        seq[ns] = -1;
+        seq_letter[ns++] = -1;
+    }
     // the verb pivot: the center of the block (advance widths x ascent to descent)
     float bx0 = 0.0f, bx1 = 0.0f;
     for (int l = 0; l < L.nlines; l++) {
@@ -236,12 +244,49 @@ static an_obj *make_text(an_scene *s, const ani_common_opts *node, const char *s
         if (l == 0 || ax < bx0) bx0 = ax;
         if (l == 0 || ax + lw > bx1) bx1 = ax + lw;
     }
-    t->vpivot = (an_vec2){ (bx0 + bx1) * 0.5f, ((y0 - asc) + (y0 + last - desc)) * 0.5f };
-    t->u.text.glyphs = glyphs;
-    t->u.text.nglyphs = gi_out;
-    t->u.text.total_arc = arc;
+    *out = (letters){ .glyphs = glyphs, .n = gi_out, .total_arc = arc, .seq = seq, .seq_letter = seq_letter,
+                      .nseq = ns, .vpivot = { (bx0 + bx1) * 0.5f, ((y0 - asc) + (y0 + last - desc)) * 0.5f } };
     free(L.g);
     free(L.line_w);
+    return true;
+}
+
+static an_obj *make_text(an_scene *s, const ani_common_opts *node, const char *str, const text_params *tp,
+                         const text_style *ts) {
+    an_font *f = tp->font;
+    const char *copy = ani_arena_strdup(&s->arena, str);
+    if (!f || !copy) return NULL;
+    // the node carries the letters' paint too: letters follow its fill, stroke
+    // and stroke width until overridden (docs/text.md)
+    ani_common_opts nopts = *node;
+    nopts.fill = ts->fill;
+    nopts.stroke = ts->stroke;
+    nopts.stroke_width = ts->stroke_width;
+    an_obj *t = ani_obj_make(s, AN_KIND_TEXT, &nopts);
+    if (!t) return NULL;
+    t->u.text.str = copy;
+    t->u.text.size = tp->size;
+    t->u.text.font = f;
+    t->u.text.size_chaos = tp->size_chaos;
+    t->u.text.inked = ts->outline;
+    // kept for an_text_set: the same layout and paint for every version
+    text_params *tpc = ani_arena_alloc(&s->arena, sizeof *tpc, alignof(text_params));
+    text_style *tsc = ani_arena_alloc(&s->arena, sizeof *tsc, alignof(text_style));
+    if (!tpc || !tsc) return NULL;
+    *tpc = *tp;
+    *tsc = *ts;
+    tsc->hidden = tsc->undrawn = false; // later versions appear by their own fades
+    t->u.text.params = tpc;
+    t->u.text.style = tsc;
+    letters L;
+    if (!make_letters(s, t, t, copy, tp, ts, &L)) return NULL;
+    t->vpivot = L.vpivot;
+    t->u.text.glyphs = L.glyphs;
+    t->u.text.nglyphs = L.n;
+    t->u.text.total_arc = L.total_arc;
+    t->u.text.seq = L.seq;
+    t->u.text.seq_letter = L.seq_letter;
+    t->u.text.nseq = L.nseq;
     return t;
 }
 
@@ -267,13 +312,239 @@ an_obj *an_text(an_scene *s, const an_text_opts *opts) {
     return make_text(s, &node, o.text ? o.text : "", &tp, &ts);
 }
 
+// ---- versions (an_text_set, docs/api-fixes.md item 2) --------------------------------------
+
+enum { MAX_VERSIONS = 256 };
+
+an_obj *ani_text_current(const an_obj *t, ani_time at) {
+    if (!t || t->kind != AN_KIND_TEXT || t->u.text.nver == 0) return NULL;
+    for (int v = t->u.text.nver - 1; v > 0; v--) {
+        const an_obj *x = t->u.text.versions[v];
+        if (x->u.tver.start >= 0 && ani_reached(x->u.tver.start, at)) return t->u.text.versions[v];
+    }
+    return t->u.text.versions[0];
+}
+
+bool ani_text_version_live(const an_obj *v, ani_time at) {
+    if (v->u.tver.start < 0) return false; // never played: never seen
+    return v->u.tver.live_to == INT64_MAX || !ani_reached(v->u.tver.live_to + 1, at);
+}
+
 int an_text_length(const an_obj *t) {
-    return t && t->kind == AN_KIND_TEXT ? t->u.text.nglyphs : 0;
+    if (!t || t->kind != AN_KIND_TEXT) return 0;
+    const an_obj *v = ani_text_current(t, ani_tick_time(t->scene->cursor));
+    return v ? v->u.tver.n : t->u.text.nglyphs;
 }
 
 an_obj *an_text_glyph(const an_obj *t, int i) {
-    if (!t || t->kind != AN_KIND_TEXT || i < 0 || i >= t->u.text.nglyphs) return NULL;
-    return t->u.text.glyphs[i];
+    if (!t || t->kind != AN_KIND_TEXT || i < 0) return NULL;
+    const an_obj *v = ani_text_current(t, ani_tick_time(t->scene->cursor));
+    if (v) return i < v->u.tver.n ? v->u.tver.glyphs[i] : NULL;
+    return i < t->u.text.nglyphs ? t->u.text.glyphs[i] : NULL;
+}
+
+static bool push_version(an_obj *t, an_obj *v) {
+    if (t->u.text.nver == t->u.text.vcap) {
+        const int cap = t->u.text.vcap ? t->u.text.vcap * 2 : 4;
+        an_obj **p = ani_arena_alloc(&t->scene->arena, sizeof(an_obj *) * (size_t)cap, alignof(an_obj *));
+        if (!p) return false;
+        if (t->u.text.nver) memcpy(p, t->u.text.versions, sizeof(an_obj *) * (size_t)t->u.text.nver);
+        t->u.text.versions = p;
+        t->u.text.vcap = cap;
+    }
+    t->u.text.versions[t->u.text.nver++] = v;
+    return true;
+}
+
+// The first an_text_set: the creation letters move into version 0 (an identity
+// node born with the text). Reparenting keeps their keys, so nothing changes.
+static bool make_version0(an_obj *t) {
+    an_obj *v = ani_obj_make(t->scene, AN_KIND_TEXT_VERSION, &(ani_common_opts){ .parent = t });
+    if (!v) return false;
+    ani_obj_part(v, "version", 0);
+    v->birth = t->birth;
+    for (int i = 0; i < t->u.text.nglyphs; i++)
+        if (t->u.text.glyphs[i]->parent == t) an_obj_set_parent(t->u.text.glyphs[i], v);
+    v->u.tver.text = t;
+    v->u.tver.glyphs = t->u.text.glyphs;
+    v->u.tver.n = t->u.text.nglyphs;
+    v->u.tver.total_arc = t->u.text.total_arc;
+    v->u.tver.seq = t->u.text.seq;
+    v->u.tver.seq_letter = t->u.text.seq_letter;
+    v->u.tver.nseq = t->u.text.nseq;
+    v->u.tver.start = 0;
+    v->u.tver.live_to = INT64_MAX;
+    return push_version(t, v);
+}
+
+// LCS of a (old) and b (new); mb[j] = the a index matched to b[j], or -1. Read
+// back from the end: equal -> match (diagonal); else up (drop a's) when
+// L[i-1][j] >= L[i][j-1], else left. Ties drop the old letter, so repeats match
+// their latest copies.
+static bool lcs(const int *a, int n, const int *b, int m, int *mb) {
+    int *L = calloc((size_t)(n + 1) * (size_t)(m + 1), sizeof(int));
+    if (!L) return false;
+#define LCS(i, j) L[(size_t)(i) * (size_t)(m + 1) + (size_t)(j)]
+    for (int i = 1; i <= n; i++)
+        for (int j = 1; j <= m; j++)
+            LCS(i, j) = a[i - 1] == b[j - 1] ? LCS(i - 1, j - 1) + 1
+                        : LCS(i - 1, j) >= LCS(i, j - 1) ? LCS(i - 1, j) : LCS(i, j - 1);
+    for (int j = 0; j < m; j++) mb[j] = -1;
+    int i = n, j = m;
+    while (i > 0 && j > 0) {
+        if (a[i - 1] == b[j - 1]) {
+            mb[j - 1] = i - 1;
+            i--;
+            j--;
+        } else if (LCS(i - 1, j) >= LCS(i, j - 1)) i--;
+        else j--;
+    }
+#undef LCS
+    free(L);
+    return true;
+}
+
+an_anim an_text_set(an_obj *t, const char *str, const an_text_set_opts *opts) {
+    const an_text_set_opts o = opts ? *opts : (an_text_set_opts){ 0 };
+    an_anim x = { .verb = AN_VERB_TEXT_SET };
+    if (!t || t->kind != AN_KIND_TEXT || !t->u.text.params) {
+        fprintf(stderr, "anown: an_text_set needs a text (an_text)\n");
+        x.failed = true;
+        x.scene = t ? t->scene : NULL;
+        return x;
+    }
+    an_scene *s = t->scene;
+    x.scene = s;
+    const int have = t->u.text.nver ? t->u.text.nver : 1;
+    if (have >= MAX_VERSIONS) {
+        fprintf(stderr, "anown: an_text_set on text \"%s\": %d versions already (the limit)\n",
+                t->name ? t->name : t->u.text.str, MAX_VERSIONS);
+        x.failed = true;
+        return x;
+    }
+    if (t->u.text.nver == 0 && !make_version0(t)) {
+        x.failed = true;
+        return x;
+    }
+    const char *copy = ani_arena_strdup(&s->arena, str ? str : "");
+    an_obj *v = copy ? ani_obj_make(s, AN_KIND_TEXT_VERSION, &(ani_common_opts){
+                           .parent = t, .hidden = o.mode == AN_TEXT_CROSSFADE })
+                     : NULL;
+    if (!v) {
+        x.failed = true;
+        return x;
+    }
+    ani_obj_part(v, "version", t->u.text.nver);
+    text_style ts = *(const text_style *)t->u.text.style;
+    ts.hidden = o.mode == AN_TEXT_LETTERS; // LETTERS: each letter appears by its own track
+    letters L;
+    if (!make_letters(s, t, v, copy, (const text_params *)t->u.text.params, &ts, &L)) {
+        x.failed = true;
+        return x;
+    }
+    const an_obj *prev = t->u.text.versions[t->u.text.nver - 1];
+    v->u.tver.text = t;
+    v->u.tver.glyphs = L.glyphs;
+    v->u.tver.n = L.n;
+    v->u.tver.total_arc = L.total_arc;
+    v->u.tver.seq = L.seq;
+    v->u.tver.seq_letter = L.seq_letter;
+    v->u.tver.nseq = L.nseq;
+    v->u.tver.start = -1;
+    v->u.tver.live_to = INT64_MAX;
+    v->u.tver.mode = o.mode;
+    v->u.tver.stagger = o.stagger < 0 ? 0 : o.stagger > 1 ? 1 : o.stagger;
+    v->u.tver.gap = o.gap > 0 ? o.gap : 0.03f;
+    v->u.tver.match = NULL;
+    if (o.mode == AN_TEXT_LETTERS) {
+        int *mb = malloc(sizeof(int) * (size_t)(L.nseq > 0 ? L.nseq : 1));
+        int *match = ani_arena_alloc(&s->arena, sizeof(int) * (size_t)(L.n > 0 ? L.n : 1), alignof(int));
+        if (!mb || !match || !lcs(prev->u.tver.seq, prev->u.tver.nseq, L.seq, L.nseq, mb)) {
+            free(mb);
+            x.failed = true;
+            return x;
+        }
+        for (int k = 0; k < L.n; k++) match[k] = -1;
+        for (int j = 0; j < L.nseq; j++) {
+            const int nl = L.seq_letter[j], ol = mb[j] >= 0 ? prev->u.tver.seq_letter[mb[j]] : -1;
+            if (nl < 0 || ol < 0) continue;
+            match[nl] = ol;
+            // the same letter going on: the same random stream, so the swap is invisible
+            L.glyphs[nl]->rng_key = prev->u.tver.glyphs[ol]->rng_key;
+            L.glyphs[nl]->rng = prev->u.tver.glyphs[ol]->rng;
+        }
+        free(mb);
+        v->u.tver.match = match;
+    }
+    if (!push_version(t, v)) {
+        x.failed = true;
+        return x;
+    }
+    x.obj = t;
+    x.swap_i = t->u.text.nver - 1;
+    x.opts = o.anim;
+    if (!(x.opts.duration > 0.0f)) x.opts.duration = 0.3f;
+    return x;
+}
+
+int64_t ani_text_record_set(an_scene *s, const an_anim *a, int64_t start) {
+    an_obj *t = a->obj;
+    if (a->swap_i <= 0 || a->swap_i >= t->u.text.nver) return start;
+    an_obj *v = t->u.text.versions[a->swap_i], *prev = t->u.text.versions[a->swap_i - 1];
+    if (v->u.tver.start >= 0) {
+        fprintf(stderr, "anown: an_text_set: this change was already played\n");
+        return start;
+    }
+    v->u.tver.start = start;
+    an_anim_opts op = a->opts;
+    int64_t end = start;
+    if (v->u.tver.mode == AN_TEXT_CROSSFADE) {
+        const float f = op.duration / (1.0f + v->u.tver.stagger);
+        op.duration = f;
+        const an_anim out = an_fade_to(prev, 0.0f, &op), in = an_fade_to(v, 1.0f, &op);
+        const int64_t e1 = ani_record_anim(s, &out, start);
+        const int64_t e2 = ani_record_anim(s, &in, start + ani_ticks(v->u.tver.stagger * f));
+        prev->u.tver.live_to = e1;
+        return e1 > e2 ? e1 : e2;
+    }
+    // LETTERS
+    const int64_t gap = ani_ticks(v->u.tver.gap);
+    bool *kept = calloc((size_t)(prev->u.tver.n > 0 ? prev->u.tver.n : 1), sizeof(bool));
+    if (!kept) return start;
+    for (int k = 0; k < v->u.tver.n; k++)
+        if (v->u.tver.match[k] >= 0) kept[v->u.tver.match[k]] = true;
+    int64_t old_end = start;
+    for (int k = 0, i = 0; k < prev->u.tver.n; k++) {
+        an_obj *g = prev->u.tver.glyphs[k];
+        if (kept[k]) { // hands over to its continuation, in place, at the start
+            ani_record(s, ani_obj_prop(g, AN_PROP_OPACITY), start, 0, AN_EASE_LINEAR, (ani_value){ { 0.0 } }, false, NULL);
+            continue;
+        }
+        const an_anim f = an_fade_to(g, 0.0f, &op);
+        const int64_t e = ani_record_anim(s, &f, start + (int64_t)(i++) * gap);
+        old_end = e > old_end ? e : old_end;
+    }
+    free(kept);
+    for (int k = 0, j = 0; k < v->u.tver.n; k++) {
+        an_obj *g = v->u.tver.glyphs[k];
+        const int m = v->u.tver.match[k];
+        if (m >= 0) {
+            ani_record(s, ani_obj_prop(g, AN_PROP_OPACITY), start, 0, AN_EASE_LINEAR, (ani_value){ { 1.0 } }, false, NULL);
+            const ani_value from = ani_sample(ani_obj_prop(prev->u.tver.glyphs[m], AN_PROP_POS), ani_tick_time(start));
+            an_anim mv = an_move_to(g, g->pos, &op);
+            mv.has_from = true;
+            mv.from[0] = (float)from.v[0];
+            mv.from[1] = (float)from.v[1];
+            const int64_t e = ani_record_anim(s, &mv, start);
+            end = e > end ? e : end;
+            continue;
+        }
+        const an_anim f = an_fade_to(g, 1.0f, &op);
+        const int64_t e = ani_record_anim(s, &f, start + (int64_t)(j++) * gap);
+        end = e > end ? e : end;
+    }
+    prev->u.tver.live_to = old_end;
+    return end > old_end ? end : old_end;
 }
 
 // ---- size factor and snapping (used by the tessellator and an_obj_chaos) --------------
