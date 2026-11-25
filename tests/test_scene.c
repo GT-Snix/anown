@@ -39,7 +39,9 @@ static void test_defaults(void) {
     an_obj *l = an_line(s, &(an_line_opts){ .to = { 10, 0 } });
     CHECK(l->stroke_width == 4.0f);
 
-    CHECK(s->count == 4 && r->id == 1 && l->id == 4);
+    // the text is one node plus one object per letter ("hello": 5), ids 3..8
+    CHECK(an_text_length(t) == 5 && an_text_glyph(t, 0)->id == 4 && an_text_glyph(t, 4)->id == 8);
+    CHECK(s->count == 9 && r->id == 1 && l->id == 9);
     an_scene_destroy(s);
 
     an_scene *s2 = an_scene_create(&(an_scene_desc){ .width = 640, .height = 480, .fps = 30, .seed = 7 });

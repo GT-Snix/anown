@@ -110,6 +110,18 @@ Out of scope for v1: LaTeX, 3D, audio, a GUI editor, and scripting-language bind
     0.995). Put them in one group and fade the group: one layer, no seam. See
     docs/layers.md "Conflation seam" and the fade-sweep PNGs from `test_layers`.
 
+14. **Text.** docs/text.md is the spec. Glyph outlines are flattened once per
+    (font, glyph) and drawn through the same pipeline as shapes; fills are
+    stencil-then-cover, non-zero (stencil bits: `0x80` silhouette, `0x70`
+    write-once marks, `0x0F` winding). Letters of one text batch into one
+    draw. `tests/test_text.c` takes every expected value from the fonts' own
+    tables; keep it that way. The fonts live in `assets/fonts/` with their
+    licenses and are embedded by `src/fonts.S`.
+15. **No-op changes are proven, not assumed.** A change that must not alter
+    output (a dependency bump, a refactor) is checked with
+    `scripts/ref-frames.sh` before and after (identical PNG bytes), plus a
+    targeted check when the reference frames don't exercise the changed code.
+
 ## Build
 
 - One `Makefile`, no CMake. `make` builds the library, the examples and the tests.
@@ -137,13 +149,14 @@ shaders/             sokol-shdc annotated GLSL
 examples/NN_name/    one directory per runnable example, main.c inside
 examples/spike_*.c   throwaway experiments; may use internal headers
                      00_hello 01_shapes 02_timeline 03_strokes 04_stroke_stress
-                     05_style 06_look 07_palettes
+                     05_style 06_look 07_palettes 08_text
 tests/               headless tests (no window, but some need a Metal device)
                      each test is a program; shared helpers in tests/check.h
-vendor/              single-header deps (sokol, stb_image_write)
+vendor/              single-header deps (sokol, stb_image_write, stb_truetype)
 tools/               downloaded binaries (sokol-shdc), not committed
 scripts/             fetch-deps.sh, bench.sh (frame bench, 5 runs per scenario,
-                     refuses on a busy CPU), time-clean-build.sh
+                     refuses on a busy CPU), time-clean-build.sh, ref-frames.sh
+assets/fonts/        the two built-in fonts (OFL), licenses, sources
 out/                 exports and PNG frames (gitignored; make clean never touches it)
 docs/experiments/    tried and not adopted, with measurements (e.g. vertex24)
 docs/progress.md     milestone log: what works, what is stubbed

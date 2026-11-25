@@ -124,6 +124,8 @@ typedef enum an_kind {
     AN_KIND_GROUP,
     AN_KIND_ARROW,
     AN_KIND_STROKE,
+    AN_KIND_GLYPH, /* one letter of a text (an_text_glyph) */
+    AN_KIND_CODE,  /* a code block (an_code): a group of lines */
 } an_kind;
 
 typedef struct an_obj an_obj;
@@ -197,12 +199,83 @@ typedef struct an_line_opts {
     an_vec2 to;
 } an_line_opts;
 
-/* Text anchored at pos. Not rendered yet (no font rendering in this version). */
+/* ---- fonts and text (docs/text.md) ---------------------------------------- */
+
+/* A font belongs to a scene (its arena). Glyph outlines are flattened once per
+ * (font, glyph) and drawn like any other path: fill, ink, boil, riso, shadow. */
+typedef struct an_font an_font;
+/* Built in (embedded, OFL 1.1, see assets/fonts): Archivo Black for display
+ * text, JetBrains Mono for code. Loaded once per scene. */
+an_font *an_font_display(an_scene *s);
+an_font *an_font_mono(an_scene *s);
+/* A TrueType/OpenType file. Static fonts only: variation axes aren't applied.
+ * NULL (with a message) if it can't be read. */
+an_font *an_font_load(an_scene *s, const char *path);
+
+typedef enum an_align { AN_ALIGN_LEFT = 0, AN_ALIGN_CENTER, AN_ALIGN_RIGHT } an_align;
+typedef enum an_anchor {
+    AN_ANCHOR_BASELINE = 0, /* pos.y is the first line's baseline */
+    AN_ANCHOR_TOP,          /* ... the first line's ascent */
+    AN_ANCHOR_MIDDLE,       /* ... the middle of the block (first ascent to last descent) */
+    AN_ANCHOR_BOTTOM,       /* ... the last line's descent */
+} an_anchor;
+
+/* Text at pos: a node whose children are its letters (AN_KIND_GLYPH objects,
+ * one per visible glyph; spaces have none). Each letter is an object of its
+ * own: move, rotate, scale, fade or draw it with the usual anims (an_stagger
+ * for per-letter effects). Rotation and scale pivot on the middle of the
+ * letter's advance at half the x-height.
+ * Letters take fill, stroke, stroke_width, pattern, riso, shadow and
+ * paper_under from these opts; the outline is drawn only if stroke or
+ * stroke_width is given (as for rects). A text draws as one object: all its
+ * shadows, then all fills, then all outlines.
+ * an_draw(text) draws the outlines on letter by letter, each letter's fill
+ * appearing when its outline closes; without an outline it reveals whole
+ * letters in order (a typewriter). */
 typedef struct an_text_opts {
     AN_OBJ_FIELDS
-    const char *text; /* copied into the scene */
-    float size;       /* em size in pixels; default 48 */
+    const char *text;    /* UTF-8, copied. "\n" breaks lines; tabs are 4 spaces */
+    float size;          /* em size in pixels; default 48 */
+    an_font *font;       /* NULL: an_font_display(s) */
+    an_align align;      /* per line, relative to pos.x */
+    an_anchor anchor;
+    float line_spacing;  /* multiplier on the font's line height; default 1 */
+    an_toggle kerning;   /* AUTO/ON: the font's kerning; OFF: none */
+    an_toggle size_chaos; /* AUTO/ON: chaos scales with the stem width on screen,
+                            so small text stays calm (docs/text.md); OFF: none */
+    bool letters_hidden;  /* every letter starts at opacity 0 */
+    bool letters_undrawn; /* every letter starts with draw progress 0 */
 } an_text_opts;
+
+/* Letters of a text, in string order (spaces and line breaks excluded). */
+int an_text_length(const an_obj *text);
+an_obj *an_text_glyph(const an_obj *text, int i); /* NULL if out of range */
+
+/* A code block (docs/text.md): monospace text on a grid, optional line
+ * numbers, a highlight bar per line, and a box. pos is the box's top-left.
+ * The code is calm (its size factor puts chaos at 0 at code sizes) while the
+ * box and highlight bars boil at the block's chaos. */
+typedef struct an_code_opts {
+    AN_OBJ_FIELDS          /* fill: code color (alpha 0: the palette's ink);
+                              stroke, stroke_width: the box outline (default ink, 4);
+                              riso, shadow: for the code text (AUTO = off) */
+    const char *code;      /* UTF-8; one line per "\n" */
+    float size;            /* em size; default 30 (an 18 px advance in the mono) */
+    an_font *font;         /* NULL: an_font_mono(s) */
+    bool line_numbers;
+    int first_line;        /* number of the first line; default 1 */
+    an_color number_color; /* alpha 0: the ink, 45% toward the paper */
+    an_color highlight;    /* bar color; alpha 0: the palette's accent c */
+    an_color box_fill;     /* alpha 0: the paper */
+    bool no_box;
+} an_code_opts;
+
+an_obj *an_code(an_scene *s, const an_code_opts *opts);
+/* Line n's highlight bar (n counts from first_line), a rect behind the line,
+ * hidden at first: fade it in to highlight. NULL if out of range. */
+an_obj *an_code_line(const an_obj *code, int n);
+/* Line n's text object (its letters via an_text_glyph). */
+an_obj *an_code_text(const an_obj *code, int n);
 
 /* An empty node that transforms its children. */
 typedef struct an_group_opts {

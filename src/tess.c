@@ -1,5 +1,6 @@
 #include "tess_internal.h"
 #include "stroke_internal.h"
+#include "text_internal.h"
 #include "timeline_internal.h"
 
 #include <math.h>
@@ -23,6 +24,7 @@ void ani_mesh_free(ani_mesh *m) {
     free(m->pts_b.q);
     free(m->pts_b.h);
     free(m->pts_b.s);
+    free(m->glyphs);
     *m = (ani_mesh){ 0 };
 }
 
@@ -257,7 +259,8 @@ static bool emit_ink(ani_mesh *m, const an_obj *o, ani_affine w, an_vec2 off, co
 }
 
 static bool has_fill(const an_obj *o, const emit_style *st) {
-    return (o->kind == AN_KIND_RECT || o->kind == AN_KIND_CIRCLE) && !o->no_fill && st->fill.a > 0.0f;
+    return (o->kind == AN_KIND_RECT || o->kind == AN_KIND_CIRCLE || o->kind == AN_KIND_GLYPH) && !o->no_fill &&
+           st->fill.a > 0.0f;
 }
 
 static bool has_ink(const an_obj *o, const emit_style *st) {
@@ -408,6 +411,386 @@ static an_color to_col(ani_value c) {
     return (an_color){ (float)c.v[0], (float)c.v[1], (float)c.v[2], (float)c.v[3] };
 }
 
+// The paint style of a drawable object at `at`, with effective chaos `chaos`.
+static emit_style sample_style(const an_scene *s, an_obj *c, float chaos, ani_time at) {
+    const an_style *sty = &s->style;
+    emit_style st = {
+        .fill = to_col(ani_sample(ani_obj_prop(c, AN_PROP_FILL), at)),
+        .stroke = to_col(ani_sample(ani_obj_prop(c, AN_PROP_STROKE), at)),
+        .stroke_width = (float)ani_sample(ani_obj_prop(c, AN_PROP_STROKE_WIDTH), at).v[0],
+        .draw = (float)ani_sample(ani_obj_prop(c, AN_PROP_DRAW), at).v[0],
+    };
+    // riso: only objects with ink, unless forced on/off per object
+    const bool riso = !sty->riso_off && c->riso != AN_OFF && (c->riso == AN_ON || c->has_stroke);
+    if (riso) st.riso = (an_vec2){ sty->riso_offset.x * chaos, sty->riso_offset.y * chaos };
+    // shadow: the scene default unless forced per object; no shadow at chaos 0
+    const bool shadow = c->shadow == AN_ON || (c->shadow == AN_AUTO && sty->shadow);
+    st.shadow = shadow && chaos > 0.0f;
+    st.shadow_offset = (an_vec2){ sty->shadow_offset.x * chaos, sty->shadow_offset.y * chaos };
+    st.shadow_color = sty->shadow_color;
+    st.chaos = chaos;
+    st.paper_under = c->paper_under;
+    st.paper = s->background;
+    // boil: keyed by the object's RNG key, arc-length buckets, and a 12 Hz step
+    // in integer math: (N * 12) / fps, so 24, 30 and 60 fps all step at 12 Hz
+    if (!sty->boil_off && chaos > 0.0f) {
+        st.boil = (ani_boil){ .amp = sty->boil * chaos, .spacing = sty->boil_spacing,
+                              .seed = s->seed, .stream = c->rng_key,
+                              .step = (uint64_t)((at.num * 12) / at.den) };
+    }
+    return st;
+}
+
+// ---- letters (docs/text.md) ---------------------------------------------------------
+
+typedef struct bbox {
+    float x0, y0, x1, y1;
+} bbox;
+
+#define BB_EMPTY ((bbox){ INFINITY, INFINITY, -INFINITY, -INFINITY })
+
+static void bb_add(bbox *b, an_vec2 p) {
+    b->x0 = fminf(b->x0, p.x);
+    b->y0 = fminf(b->y0, p.y);
+    b->x1 = fmaxf(b->x1, p.x);
+    b->y1 = fmaxf(b->y1, p.y);
+}
+
+static void bb_union(bbox *b, bbox o) {
+    b->x0 = fminf(b->x0, o.x0);
+    b->y0 = fminf(b->y0, o.y0);
+    b->x1 = fmaxf(b->x1, o.x1);
+    b->y1 = fmaxf(b->y1, o.y1);
+}
+
+typedef struct glyph_item {
+    an_obj *o;
+    ani_affine w;     // world transform (snapped when calm)
+    ani_affine pw;    // the text's world transform: pattern space, shared by its letters
+    emit_style st;
+    bool fill_on;     // the fill shows (draw-on pops it in when the outline closes)
+    bool ink_on;      // the outline shows (has ink, some of it drawn)
+    an_vec2 soff;     // shadow offset, scene px (clears the ink)
+    int iv0, iv1;     // its ink triangles, once emitted
+    bbox box;         // scratch: the box of its latest fans
+} glyph_item;
+
+// One letter at `at`: size factor on chaos, snapping, style, draw progress.
+// Returns the effective chaos (for its children).
+static float sample_glyph(const an_scene *s, an_obj *c, ani_affine pw, ani_affine w, an_vec2 scale, float rot,
+                          float chaos, ani_time at, glyph_item *g) {
+    const an_style *sty = &s->style;
+    const float wscale = sqrtf(fabsf(w.a * w.d - w.b * w.c));
+    chaos *= ani_text_size_factor(c, wscale, sty->boil_off ? 0.0f : sty->boil);
+    an_obj *text = c->u.glyph.text;
+    const bool in_text = c->parent == text;
+    // calm letters sit on whole pixels relative to the text's origin
+    if (chaos == 0.0f && in_text) ani_text_snap(pw, &w, c->u.glyph.pen, rot, scale);
+    *g = (glyph_item){ .o = c, .w = w, .pw = in_text ? pw : w };
+    emit_style st = sample_style(s, c, chaos, at);
+    const float rs = ani_text_riso_scale(c, wscale);
+    st.riso = (an_vec2){ st.riso.x * rs, st.riso.y * rs };
+    // draw progress: the text's, spread over its letters, and the letter's own
+    const float D = (float)ani_sample(ani_obj_prop(text, AN_PROP_DRAW), at).v[0];
+    const float own = st.draw;
+    bool shown;
+    if (text->u.text.inked) {
+        float local = 1.0f;
+        if (D < 1.0f) {
+            const float len = c->path ? c->path->total : 0.0f;
+            local = len > 0.0f ? (D * text->u.text.total_arc - c->u.glyph.arc0) / len : (D > 0.0f ? 1.0f : 0.0f);
+            local = local < 0.0f ? 0.0f : local > 1.0f ? 1.0f : local;
+        }
+        st.draw = own < local ? own : local;
+        shown = st.draw > 0.0f;
+    } else {
+        // typewriter: whole letters in order; the letter's own draw must be complete
+        const int n = text->u.text.nglyphs;
+        shown = (D >= 1.0f || D * (float)n >= (float)(c->u.glyph.index + 1)) && own >= 1.0f;
+    }
+    g->fill_on = shown && has_fill(c, &st) && st.draw >= 1.0f;
+    g->ink_on = shown && has_ink(c, &st);
+    g->st = st;
+    // the shadow clears the ink, as for shapes
+    g->soff = st.shadow_offset;
+    if (st.shadow && g->ink_on) {
+        const float wpx = st.stroke_width * wscale * st.chaos;
+        g->soff.x += st.shadow_offset.x > 0 ? wpx : (st.shadow_offset.x < 0 ? -wpx : 0.0f);
+        g->soff.y += st.shadow_offset.y > 0 ? wpx : (st.shadow_offset.y < 0 ? -wpx : 0.0f);
+    }
+    return chaos;
+}
+
+static bool push_cmd(ani_mesh *m, int target, ani_paint paint, int first, int end) {
+    if (end <= first) return true;
+    if (!grow((void **)&m->cmds, &m->cmd_cap, m->ncmds + 1, sizeof(ani_cmd))) return false;
+    m->cmds[m->ncmds++] = (ani_cmd){ .kind = ANI_CMD_TRIS, .target = target, .paint = paint, .first = first,
+                                     .count = end - first };
+    return true;
+}
+
+// Winding fans of the letter's contours (each a fan from its first point),
+// boiled like its outline, translated by `off`. Extends *bb.
+static bool glyph_fans(ani_mesh *m, const glyph_item *g, an_vec2 off, an_color col, bbox *bb) {
+    const ani_path *p = g->o->path;
+    for (int k = 0; k < p->nsubs; k++) {
+        const ani_subpath *sp = &p->subs[k];
+        if (sp->count < 3) continue;
+        if (g->st.boil.amp > 0.0f) {
+            const an_vec2 *ring; // mesh scratch, valid until the next stroke call
+            const int n = ani_boil_ring_sub(m, p, k, g->w, &g->st.boil, &ring);
+            if (n < 0) return false;
+            if (n < 3) continue;
+            const an_vec2 r0 = add(ring[0], off);
+            bb_add(bb, r0);
+            for (int i = 1; i + 1 < n; i++) {
+                const an_vec2 a = add(ring[i], off), b = add(ring[i + 1], off);
+                bb_add(bb, a);
+                bb_add(bb, b);
+                if (!ani_mesh_tri(m, r0, a, b, col)) return false;
+            }
+        } else {
+            const an_vec2 r0 = add(ani_affine_apply(g->w, p->pts[sp->first]), off);
+            an_vec2 a = add(ani_affine_apply(g->w, p->pts[sp->first + 1]), off);
+            bb_add(bb, r0);
+            bb_add(bb, a);
+            for (int i = 2; i < sp->count; i++) {
+                const an_vec2 b = add(ani_affine_apply(g->w, p->pts[sp->first + i]), off);
+                bb_add(bb, b);
+                if (!ani_mesh_tri(m, r0, a, b, col)) return false;
+                a = b;
+            }
+        }
+    }
+    return true;
+}
+
+// The cover quad over a box (1 px margin: the cover only paints where the
+// winding is nonzero, so it must reach every sample the fans touched).
+static bool cover_quad(ani_mesh *m, bbox b, an_color col) {
+    if (!(b.x1 >= b.x0)) return true;
+    return quad(m, (an_vec2){ b.x0 - 1, b.y0 - 1 }, (an_vec2){ b.x1 + 1, b.y0 - 1 }, (an_vec2){ b.x1 + 1, b.y1 + 1 },
+                (an_vec2){ b.x0 - 1, b.y1 + 1 }, col);
+}
+
+// Copy triangles [v0, v1), translated and recolored (pattern off). Extends *bb.
+static bool copy_tris(ani_mesh *m, int v0, int v1, an_vec2 off, an_color c, bbox *bb) {
+    const int n = v1 - v0;
+    if (n <= 0) return true;
+    if (!grow((void **)&m->v, &m->cap, m->count + n, sizeof(ani_vertex))) return false;
+    for (int i = 0; i < n; i++) {
+        const ani_vertex v = m->v[v0 + i];
+        m->v[m->count] = (ani_vertex){ .x = v.x + off.x, .y = v.y + off.y, .r = c.r, .g = c.g, .b = c.b, .a = c.a };
+        if (bb) bb_add(bb, (an_vec2){ m->v[m->count].x, m->v[m->count].y });
+        m->count++;
+    }
+    return true;
+}
+
+static bool same_fill(const glyph_item *a, const glyph_item *b) {
+    const an_color p = a->st.fill, q = b->st.fill;
+    const an_pattern *x = &a->o->pattern, *y = &b->o->pattern;
+    if (p.r != q.r || p.g != q.g || p.b != q.b || p.a != q.a || x->kind != y->kind) return false;
+    if (x->kind == AN_PATTERN_SOLID) return true;
+    return x->size == y->size && x->angle == y->angle && x->density == y->density &&
+           memcmp(&a->pw, &b->pw, sizeof a->pw) == 0;
+}
+
+// Fans for a set of letters, then one cover per letter: wind + cover vertex
+// ranges [*w0, *w1) and [*w1, *c1). pick(g) says which letters take part; offset
+// and color per letter come from off_of / col_of. Covers get the fill pattern
+// when `pattern` is set.
+typedef enum fan_kind { FANS_FILL, FANS_SHADOW, FANS_SIL } fan_kind;
+
+static bool fans_and_covers(ani_mesh *m, glyph_item *gs, int i0, int i1, fan_kind kind, an_color paper,
+                            int *w0, int *w1, int *c1, bbox *all) {
+    *w0 = m->count;
+    for (int k = i0; k < i1; k++) {
+        glyph_item *g = &gs[k];
+        g->box = BB_EMPTY;
+        if (!g->fill_on) continue;
+        if (kind == FANS_SHADOW && !(g->st.shadow && g->st.shadow_color.a > 0.0f)) continue;
+        bool ok;
+        switch (kind) {
+        case FANS_FILL: ok = glyph_fans(m, g, g->st.riso, g->st.fill, &g->box); break;
+        case FANS_SHADOW: ok = glyph_fans(m, g, add(g->st.riso, g->soff), g->st.shadow_color, &g->box); break;
+        default: // the silhouette: the fill where it's registered and where riso moved it
+            ok = glyph_fans(m, g, (an_vec2){ 0, 0 }, paper, &g->box);
+            if (ok && (g->st.riso.x != 0.0f || g->st.riso.y != 0.0f)) ok = glyph_fans(m, g, g->st.riso, paper, &g->box);
+            break;
+        }
+        if (!ok) return false;
+    }
+    *w1 = m->count;
+    for (int k = i0; k < i1; k++) {
+        glyph_item *g = &gs[k];
+        if (!(g->box.x1 >= g->box.x0)) continue;
+        const int cv = m->count;
+        const an_color col = kind == FANS_FILL ? g->st.fill : kind == FANS_SHADOW ? g->st.shadow_color : paper;
+        if (!cover_quad(m, g->box, col)) return false;
+        if (kind == FANS_FILL) set_pattern(m, cv, &g->o->pattern, g->pw, g->st.riso);
+        if (kind == FANS_SIL) {
+            for (int v = cv; v < m->count; v++) m->v[v].a = 1.0f;
+        }
+        if (all) bb_union(all, g->box);
+    }
+    *c1 = m->count;
+    return true;
+}
+
+// A batch of letters drawn as ONE object into `target` (docs/text.md, problems 1
+// and 3): [silhouette] all shadows [silhouette clear] [paper] all fills, all
+// outlines. Fills are stencil-then-cover, non-zero, in runs of one fill color and
+// pattern (a cover quad paints every nonzero sample under it, so letters with
+// different fills must not share a wind/cover pair).
+static bool emit_glyphs(ani_mesh *m, glyph_item *gs, int n, int target) {
+    if (n <= 0) return true;
+    const bool in_layer = target != ANI_TARGET_MAIN;
+    const int v0 = m->count, cmd_pos = m->ncmds;
+    bool any_shadow = false, any_paper = false, any_visible = false, ink_tr = false;
+    an_color shadow_col = { 0 }, paper = { 0 };
+    for (int i = 0; i < n; i++) {
+        const glyph_item *g = &gs[i];
+        if (!g->fill_on && !g->ink_on) continue;
+        any_visible = true;
+        if (g->st.shadow && g->st.shadow_color.a > 0.0f) {
+            any_shadow = true;
+            shadow_col = g->st.shadow_color; // a style color: the same for every letter
+        }
+        any_paper = any_paper || g->st.paper_under;
+        ink_tr = ink_tr || (in_layer && g->ink_on && g->st.stroke.a < 1.0f);
+        paper = g->st.paper;
+    }
+    if (!any_visible) return true;
+    paper.a = 1.0f;
+    const bool shadow_st = in_layer && any_shadow && shadow_col.a < 1.0f;
+    const bool stencil = shadow_st || ink_tr;
+    const bool cut = any_shadow, sil = cut || any_paper;
+
+    // outlines: opaque, then translucent (write-once marks in a layer)
+    int ink[3];
+    for (int i = 0; i < n; i++) gs[i].iv0 = gs[i].iv1 = 0;
+    ink[0] = m->count;
+    for (int pass = 0; pass < 2; pass++) {
+        for (int i = 0; i < n; i++) {
+            glyph_item *g = &gs[i];
+            if (!g->ink_on || (in_layer && g->st.stroke.a < 1.0f) != (pass == 1)) continue;
+            g->iv0 = m->count;
+            if (!emit_ink(m, g->o, g->w, (an_vec2){ 0, 0 }, &g->st, g->st.stroke)) return false;
+            g->iv1 = m->count;
+        }
+        ink[pass + 1] = m->count;
+    }
+
+    // fills: runs of one fill, each [fans][covers]; ranges kept for the commands
+    typedef struct fill_run { int w0, w1, c1; } fill_run;
+    fill_run runs_local[16], *runs = runs_local;
+    int nruns = 0, runs_cap = 16;
+    for (int i = 0; i < n;) {
+        if (!gs[i].fill_on) {
+            i++;
+            continue;
+        }
+        int j = i + 1;
+        while (j < n && (!gs[j].fill_on || same_fill(&gs[i], &gs[j]))) j++;
+        if (nruns == runs_cap) {
+            fill_run *nr = malloc(sizeof *nr * (size_t)runs_cap * 2);
+            if (!nr) goto fail;
+            memcpy(nr, runs, sizeof *nr * (size_t)nruns);
+            if (runs != runs_local) free(runs);
+            runs = nr;
+            runs_cap *= 2;
+        }
+        fill_run *r = &runs[nruns++];
+        if (!fans_and_covers(m, gs, i, j, FANS_FILL, paper, &r->w0, &r->w1, &r->c1, NULL)) goto fail;
+        i = j;
+    }
+
+    // shadows: the fills' (fans + covers) and the outlines' (copies)
+    int sw0 = 0, sw1 = 0, sc1 = 0, si0 = 0, si1 = 0;
+    if (any_shadow) {
+        if (!fans_and_covers(m, gs, 0, n, FANS_SHADOW, paper, &sw0, &sw1, &sc1, NULL)) goto fail;
+        si0 = m->count;
+        for (int i = 0; i < n; i++) {
+            const glyph_item *g = &gs[i];
+            if (g->st.shadow && g->iv1 > g->iv0 && !copy_tris(m, g->iv0, g->iv1, g->soff, shadow_col, NULL)) goto fail;
+        }
+        si1 = m->count;
+    }
+
+    // silhouette: every letter's fill (registered and moved) and outline
+    int lw0 = 0, lw1 = 0, lc1 = 0, li0 = 0, li1 = 0, lq0 = 0, lq1 = 0;
+    if (sil) {
+        bbox all = BB_EMPTY;
+        if (!fans_and_covers(m, gs, 0, n, FANS_SIL, paper, &lw0, &lw1, &lc1, &all)) goto fail;
+        li0 = m->count;
+        for (int i = 0; i < n; i++) {
+            const glyph_item *g = &gs[i];
+            if (g->iv1 > g->iv0 && !copy_tris(m, g->iv0, g->iv1, (an_vec2){ 0, 0 }, paper, &all)) goto fail;
+        }
+        li1 = m->count;
+        lq0 = m->count;
+        if (cut && !cover_quad(m, all, paper)) goto fail;
+        lq1 = m->count;
+    }
+
+    // an earlier translucent object in this layer left marks: reset them first
+    if (stencil && m->layer_used[target] && !stencil_clear_before(m, target, v0, cmd_pos)) goto fail;
+
+    // commands, in draw order
+    bool ok = true;
+    if (cut) {
+        ok = ok && push_cmd(m, target, ANI_PAINT_WIND_SIL, lw0, lw1) && push_cmd(m, target, ANI_PAINT_COVER_SIL, lw1, lc1) &&
+             push_cmd(m, target, ANI_PAINT_SILHOUETTE, li0, li1);
+    }
+    if (any_shadow) {
+        ok = ok && push_cmd(m, target, shadow_st ? ANI_PAINT_WIND_SHADOW : ANI_PAINT_WIND_SHADOW_CUT, sw0, sw1) &&
+             push_cmd(m, target, shadow_st ? ANI_PAINT_COVER_SHADOW : ANI_PAINT_COVER, sw1, sc1) &&
+             push_cmd(m, target, shadow_st ? ANI_PAINT_SHADOW : ANI_PAINT_SHADOW_CUT, si0, si1);
+    }
+    if (cut) ok = ok && push_cmd(m, target, ANI_PAINT_SILHOUETTE_CLEAR, lq0, lq1);
+    if (any_paper) {
+        ok = ok && push_cmd(m, target, ANI_PAINT_WIND, lw0, lw1) && push_cmd(m, target, ANI_PAINT_COVER, lw1, lc1) &&
+             push_cmd(m, target, ANI_PAINT_DIRECT, li0, li1);
+    }
+    for (int r = 0; ok && r < nruns; r++) {
+        ok = push_cmd(m, target, ANI_PAINT_WIND, runs[r].w0, runs[r].w1) &&
+             push_cmd(m, target, ANI_PAINT_COVER, runs[r].w1, runs[r].c1);
+    }
+    ok = ok && push_cmd(m, target, ANI_PAINT_DIRECT, ink[0], ink[1]) &&
+         push_cmd(m, target, in_layer ? ANI_PAINT_INK : ANI_PAINT_DIRECT, ink[1], ink[2]);
+    if (runs != runs_local) free(runs);
+    if (!ok) return false;
+    if (stencil) m->layer_used[target] = true;
+    m->merge_barrier = true;
+    return true;
+fail:
+    if (runs != runs_local) free(runs);
+    return false;
+}
+
+// Does any letter of a text have a translucent paint at `at`? (Outside a layer
+// the whole text is then isolated: one layer, not one per letter.)
+static bool text_translucent(const an_scene *s, const an_obj *t, ani_time at) {
+    for (int i = 0; i < t->u.text.nglyphs; i++) {
+        an_obj *g = t->u.text.glyphs[i];
+        if (g->parent != t) continue;
+        const float fa = (float)ani_sample(ani_obj_prop(g, AN_PROP_FILL), at).v[3];
+        const float sa = (float)ani_sample(ani_obj_prop(g, AN_PROP_STROKE), at).v[3];
+        if ((!g->no_fill && fa > 0.0f && fa < 1.0f) || (g->has_stroke && sa > 0.0f && sa < 1.0f)) return true;
+        const bool shadow = g->shadow == AN_ON || (g->shadow == AN_AUTO && s->style.shadow);
+        if (shadow && s->style.shadow_color.a < 1.0f) return true;
+    }
+    return false;
+}
+
+// Emit the pending batch of letters (m->glyphs[base..]) into target.
+static bool flush_glyphs(ani_mesh *m, int base, int target) {
+    const int n = m->glyph_count - base;
+    m->glyph_count = base;
+    return n <= 0 || emit_glyphs(m, (glyph_item *)m->glyphs + base, n, target);
+}
+
 // pchaos: effective chaos of the parent (scene dial x multipliers down the tree)
 static bool visit_children(ani_mesh *m, const an_scene *s, const an_obj *parent, ani_affine pw, int target,
                            float pchaos, ani_time at) {
@@ -423,52 +806,55 @@ static bool visit_children(ani_mesh *m, const an_scene *s, const an_obj *parent,
     const int n = m->scratch_count - base;
     qsort(m->scratch + base, (size_t)n, sizeof(ani_draw_item), cmp_draw);
 
-    const an_style *sty = &s->style;
+    // consecutive letters batch into one draw (docs/text.md, problem 3); anything
+    // else, an isolated letter, or a letter with children ends the batch
+    const int gbase = m->glyph_count;
     for (int i = 0; i < n; i++) {
         an_obj *c = m->scratch[base + i].obj; // re-read: scratch may have moved
         const float opacity = (float)ani_sample(ani_obj_prop(c, AN_PROP_OPACITY), at).v[0];
         if (opacity <= 0.0f) continue; // invisible, and so are its children
-        const float chaos = pchaos * (float)ani_sample(ani_obj_prop(c, AN_PROP_CHAOS), at).v[0];
+        float chaos = pchaos * (float)ani_sample(ani_obj_prop(c, AN_PROP_CHAOS), at).v[0];
         const ani_value pos = ani_sample(ani_obj_prop(c, AN_PROP_POS), at);
         const ani_value sc = ani_sample(ani_obj_prop(c, AN_PROP_SCALE), at);
         const ani_value rot = ani_sample(ani_obj_prop(c, AN_PROP_ROTATION), at);
+        const an_vec2 scale = { (float)sc.v[0], (float)sc.v[1] };
         const ani_affine w = ani_affine_mul(
-            pw, ani_local((an_vec2){ (float)pos.v[0], (float)pos.v[1] },
-                          (an_vec2){ (float)sc.v[0], (float)sc.v[1] }, (float)rot.v[0]));
-        emit_style st = { 0 };
-        const bool drawable = c->kind != AN_KIND_GROUP && c->kind != AN_KIND_TEXT;
-        if (drawable) {
-            st = (emit_style){
-                .fill = to_col(ani_sample(ani_obj_prop(c, AN_PROP_FILL), at)),
-                .stroke = to_col(ani_sample(ani_obj_prop(c, AN_PROP_STROKE), at)),
-                .stroke_width = (float)ani_sample(ani_obj_prop(c, AN_PROP_STROKE_WIDTH), at).v[0],
-                .draw = (float)ani_sample(ani_obj_prop(c, AN_PROP_DRAW), at).v[0],
-            };
-            // riso: only objects with ink, unless forced on/off per object
-            const bool riso = !sty->riso_off && c->riso != AN_OFF && (c->riso == AN_ON || c->has_stroke);
-            if (riso) st.riso = (an_vec2){ sty->riso_offset.x * chaos, sty->riso_offset.y * chaos };
-            // shadow: the scene default unless forced per object; no shadow at chaos 0
-            const bool shadow = c->shadow == AN_ON || (c->shadow == AN_AUTO && sty->shadow);
-            st.shadow = shadow && chaos > 0.0f;
-            st.shadow_offset = (an_vec2){ sty->shadow_offset.x * chaos, sty->shadow_offset.y * chaos };
-            st.shadow_color = sty->shadow_color;
-            st.chaos = chaos;
-            st.paper_under = c->paper_under;
-            st.paper = s->background;
-            // boil: keyed by the object's RNG key, arc-length buckets, and a 12 Hz step
-            // in integer math: (N * 12) / fps, so 24, 30 and 60 fps all step at 12 Hz
-            if (!sty->boil_off && chaos > 0.0f) {
-                st.boil = (ani_boil){ .amp = sty->boil * chaos, .spacing = sty->boil_spacing,
-                                      .seed = s->seed, .stream = c->rng_key,
-                                      .step = (uint64_t)((at.num * 12) / at.den) };
+            pw, ani_local((an_vec2){ (float)pos.v[0], (float)pos.v[1] }, scale, (float)rot.v[0]));
+        if (c->kind == AN_KIND_GLYPH) {
+            glyph_item g;
+            chaos = sample_glyph(s, c, pw, w, scale, (float)rot.v[0], chaos, at, &g);
+            // a letter fading on its own gets its own layer; outside a layer, so does
+            // a translucent one that isn't in its text (a text isolates as a whole)
+            const bool tr = (g.fill_on && g.st.fill.a < 1.0f) || (g.ink_on && g.st.stroke.a < 1.0f) ||
+                            (g.st.shadow && g.st.shadow_color.a < 1.0f && (g.fill_on || g.ink_on));
+            const bool isolate = m->force_isolate || opacity < 1.0f || (tr && target == ANI_TARGET_MAIN);
+            if (isolate) {
+                if (!flush_glyphs(m, gbase, target)) return false;
+                const int t = layer_new(m, target, opacity, c);
+                if (t < 0 || !emit_glyphs(m, &g, 1, t)) return false;
+                if (c->first_child && !visit_children(m, s, c, g.w, t, chaos, at)) return false;
+                continue;
             }
+            if (!grow(&m->glyphs, &m->glyph_cap, m->glyph_count + 1, sizeof(glyph_item))) return false;
+            ((glyph_item *)m->glyphs)[m->glyph_count++] = g;
+            if (c->first_child) {
+                if (!flush_glyphs(m, gbase, target)) return false;
+                if (!visit_children(m, s, c, g.w, target, chaos, at)) return false;
+            }
+            continue;
         }
+        if (!flush_glyphs(m, gbase, target)) return false;
+        emit_style st = { 0 };
+        const bool drawable = c->kind != AN_KIND_GROUP && c->kind != AN_KIND_TEXT && c->kind != AN_KIND_CODE;
+        if (drawable) st = sample_style(s, c, chaos, at);
         // Isolate when the node fades as a unit, or (outside any layer) when a
         // translucent paint needs stencil coverage. docs/layers.md
-        const bool translucent = drawable && ((has_fill(c, &st) && st.fill.a < 1.0f) ||
-                                              (has_ink(c, &st) && st.stroke.a < 1.0f) ||
-                                              (st.shadow && st.shadow_color.a < 1.0f &&
-                                               (has_fill(c, &st) || has_ink(c, &st))));
+        const bool translucent = drawable ? ((has_fill(c, &st) && st.fill.a < 1.0f) ||
+                                             (has_ink(c, &st) && st.stroke.a < 1.0f) ||
+                                             (st.shadow && st.shadow_color.a < 1.0f &&
+                                              (has_fill(c, &st) || has_ink(c, &st))))
+                                          : c->kind == AN_KIND_TEXT && target == ANI_TARGET_MAIN &&
+                                                text_translucent(s, c, at);
         const bool isolate = m->force_isolate || opacity < 1.0f || (translucent && target == ANI_TARGET_MAIN);
         int t = target;
         if (isolate) {
@@ -478,6 +864,7 @@ static bool visit_children(ani_mesh *m, const an_scene *s, const an_obj *parent,
         if (drawable && !emit(m, c, w, &st, t)) return false;
         if (c->first_child && !visit_children(m, s, c, w, t, chaos, at)) return false;
     }
+    if (!flush_glyphs(m, gbase, target)) return false;
     m->scratch_count = base;
     return true;
 }
@@ -487,6 +874,7 @@ bool ani_tess_scene(ani_mesh *m, const an_scene *s, int64_t frame) {
     m->ncmds = 0;
     m->nlayers = 0;
     m->scratch_count = 0;
+    m->glyph_count = 0;
     m->merge_barrier = false;
     const float w = (float)s->width, h = (float)s->height;
     // the background is its own paint: drawn flat, or replaced by the paper shader

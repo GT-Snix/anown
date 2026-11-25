@@ -2,6 +2,7 @@
 // docs/timeline.md is the spec; keep the two in sync.
 #include "timeline_internal.h"
 #include "ease_internal.h"
+#include "text_internal.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -492,8 +493,16 @@ double ani_scene_chaos_at(an_scene *s, ani_time at) {
 
 double ani_obj_chaos_at(an_obj *o, ani_time at) {
     double c = ani_scene_chaos_at(o->scene, at);
+    double det = 1.0; // of the world transform: the product of the scales' determinants
     for (an_obj *p = o; p && p->parent; p = p->parent) { // the hidden root isn't a target
         c *= ani_sample(ani_obj_prop(p, AN_PROP_CHAOS), at).v[0];
+        const ani_value sc = ani_sample(ani_obj_prop(p, AN_PROP_SCALE), at);
+        det *= sc.v[0] * sc.v[1];
+    }
+    // a letter's size factor (docs/text.md, problem 4), from its scale on screen
+    if (o->kind == AN_KIND_GLYPH) {
+        const an_style *sty = &o->scene->style;
+        c *= ani_text_size_factor(o, (float)sqrt(fabs(det)), sty->boil_off ? 0.0f : sty->boil);
     }
     return c;
 }

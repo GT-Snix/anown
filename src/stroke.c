@@ -442,9 +442,13 @@ static bool ensure(pts_buf *b, int need) {
 }
 
 int ani_boil_ring(ani_mesh *mesh, const ani_path *p, ani_affine w, const ani_boil *b, const an_vec2 **out) {
+    return ani_boil_ring_sub(mesh, p, 0, w, b, out);
+}
+
+int ani_boil_ring_sub(ani_mesh *mesh, const ani_path *p, int sub, ani_affine w, const ani_boil *b, const an_vec2 **out) {
     *out = NULL;
-    if (!p || p->nsubs == 0 || p->subs[0].count < 3) return 0;
-    const ani_subpath *sp = &p->subs[0];
+    if (!p || sub < 0 || sub >= p->nsubs || p->subs[sub].count < 3) return 0;
+    const ani_subpath *sp = &p->subs[sub];
     pts_buf *src = &mesh->pts_a, *dst = &mesh->pts_b;
     src->n = 0;
     for (int i = 0; i < sp->count; i++) {
@@ -453,7 +457,7 @@ int ani_boil_ring(ani_mesh *mesh, const ani_path *p, ani_affine w, const ani_boi
     // insert bucket points between consecutive (deduplicated) ring points, in
     // scene space, then displace the loop
     boil_noise z;
-    noise_init(&z, b, 0, sp->len, true);
+    noise_init(&z, b, sub, sp->len, true);
     const int n = src->n;
     dst->n = 0;
     for (int i = 0; i < n; i++) {

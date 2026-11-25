@@ -42,6 +42,18 @@ typedef enum ani_paint {
     ANI_PAINT_SILHOUETTE,    // set the silhouette bit (fill + shifted fill + ink); no color
     ANI_PAINT_SILHOUETTE_CLEAR, // clear the silhouette bit over the same geometry; no color
     ANI_PAINT_SHADOW_CUT,    // opaque shadow: only where the silhouette bit is clear (main or layer)
+    // Stencil-then-cover fills (glyphs, docs/text.md): a WIND pass draws each
+    // contour as a fan from its first point, counting the winding number in bits
+    // 0x0F (front faces +1, back faces -1, mod 16), color off; then a COVER pass
+    // draws one quad per glyph that paints where the winding is nonzero and zeroes
+    // it, so every sample is painted at most once (write-once by construction).
+    ANI_PAINT_WIND,              // count winding everywhere
+    ANI_PAINT_WIND_SIL,          // the same, for a silhouette (skipped where silhouettes are)
+    ANI_PAINT_WIND_SHADOW_CUT,   // count only outside the silhouette (opaque shadow)
+    ANI_PAINT_WIND_SHADOW,       // layers: outside the silhouette and not yet shadowed
+    ANI_PAINT_COVER,             // paint where the winding is nonzero; zero it
+    ANI_PAINT_COVER_SHADOW,      // layers: the same, and set the shadow mark (translucent shadow)
+    ANI_PAINT_COVER_SIL,         // set the silhouette bit where the winding is nonzero; zero it; no color
     ANI_PAINT_COUNT
 } ani_paint;
 
@@ -88,6 +100,9 @@ typedef struct ani_mesh {
     bool merge_barrier;
     // stroke triangulator scratch, reused across strokes and frames
     ani_pts pts_a, pts_b;
+    // letters waiting to be emitted as one batch (tess.c), reused across frames
+    void *glyphs;
+    int glyph_count, glyph_cap;
 } ani_mesh;
 
 void ani_mesh_init(ani_mesh *m);

@@ -479,3 +479,89 @@ and writes only its own field.
   reference PNGs byte-identical after the re-fetch.
 - Fonts in `assets/fonts/` with their OFL texts and copyright notices
   (`assets/fonts/README.md` has sources, commits and hashes).
+
+## Profile of the frame bench, scenario 0 (2026-11-25, before text)
+
+`spike_frame_bench 0 --profile` splits every measured frame (30..360) into
+phases: CPU timestamps (CLOCK_UPTIME_RAW) around tessellation, the vertex
+upload and encoding, and the GPU's own start/end times for sokol's command
+buffer and the readback blit. The phases sum to the measured frame time
+(within 0.03 ms). 5 runs that passed the CPU guard before and after (93–97%
+idle; a sixth was refused after its run and isn't counted). Not optimized.
+
+| phase (ms) | median frame | p99 frame |
+|---|---|---|
+| tessellate (CPU) | 4.17–4.71 | 7.68–7.95 |
+| vertex upload (memcpy into the transient buffer) | 0.37–0.46 | 1.28–1.72 |
+| encode + commit | 0.02 | 0.02 |
+| commit until the GPU starts | 0.39–0.64 | 0.40–0.65 |
+| GPU: render + MSAA resolve | 1.66–2.34 | 3.5–4.1 |
+| GPU: readback blit | 0.09–0.13 | 0.13–1.12 |
+| blit end until the wait returns | 0.12–0.16 | 0.08–0.22 |
+| copy out (8.3 MB memcpy) | 0.21–0.23 | 0.21–0.38 |
+| **frame** | **7.76–7.86** | **14.2–14.9** |
+
+Tessellation is 55–60% of the median frame and about half of the p99 frame;
+the GPU is under 2 ms at the median. The p99 frames are the late ones (frames
+285–352: every stroke drawn, boil on), where tessellation and the GPU both
+roughly double. Raw output: `out/profile/`.
+
+## Text (2026-11-25)
+
+docs/text.md is the spec, with an "As built" section at the end.
+
+**Order of work.** Step 1 (the stencil re-split) was its own commit, checked
+bit-identical before any text code. Glyph fills, layout and kerning, per-letter
+transforms, draw-on and stagger, and the code block were then written in one
+pass: the shared tessellator path made them hard to land separately. All tests
+ran after that pass, not between those steps.
+
+Works:
+- `an_text` with fonts (`an_font_display`, `an_font_mono`, both embedded;
+  `an_font_load`), em sizes, kerning (kern + GPOS through stb), multi-line,
+  `.align` per line, `.anchor`, `.line_spacing`. One object per letter
+  (`an_text_glyph`, `an_text_length`), pivot at the middle of the advance at
+  half the x-height.
+- Glyph fills by stencil-then-cover, non-zero; outline through
+  `ani_stroke_emit` (brush, taper, overshoot); riso, hard shadow, the shadow cut
+  and `.paper_under`; boil per contour; patterns.
+- The size factor on chaos (with the 30% cap), from the on-screen stem every
+  frame, overridable (`.size_chaos = AN_OFF`); included in `an_obj_chaos`.
+  Riso offset scaled by display size. Code text has riso and shadow off.
+- Snapping relative to the text's origin when calm, not under rotation or
+  non-uniform scale.
+- Tag-draw (`an_draw(text)`), typewriter, per-letter stagger with ordinary anims.
+- `an_code`: line numbers, per-line highlight bars (`an_code_line`), a box, line
+  texts (`an_code_text`); the code is calm, the box and bars boil.
+- `examples/08_text`: a title drawn on, a staggered subtitle, a letter wave and
+  a spin, a code snippet typed in with a stepping highlight.
+  `out/text_frames/` (84 PNGs, every 10th frame) and `out/text.mp4` (836 frames,
+  1080p60). Re-rendered frames are byte-identical.
+
+Tests: `tests/test_text.c`, 13 groups, all expected values from the fonts'
+tables (read by the test's own reader) and worked out in comments: layout and
+anchors, the H's stems and crossbar in pixels, the O's counter, kerning in
+pixels (and the same check failing with kerning off), overlap (non-zero) and
+translucent overlap (write-once), winding overflow (15 and 17 fill, 16 doesn't),
+a letter rotated about its pivot with its neighbors unchanged, snapping (unit
+and pixel), draw-on / typewriter / stagger frames, the code block's number
+alignment and bar rows, the size factor, the shadow cut on a halftone "o" (also
+over a rect, with and without paper_under), and text plus shadowed shapes in
+one faded layer. Breaking the implementation on purpose five ways (non-zero
+lost, kerning ignored, no snapping, no silhouette on text, no size factor)
+fails 8, 2, 3, 2 and 3 checks. `test_scene`'s object count changed: a text is
+now a node plus its letters.
+
+Measured: small-text quality against stb's rasterizer (fix 2 not needed), the
+code-block bench scenario (median 6.1 ms, p99 under 7), and scenario 0 after
+the text changes (tessellation 4.0 ms avg, unchanged). Clean build 4.14 s. All
+16 test programs pass; the 60 reference PNGs are byte-identical to the
+baseline.
+
+Stubbed / not done:
+- No shaping (GSUB): no ligatures, no complex scripts, Latin only. No wrapping.
+- Letters take the text's style at creation; animating the text node's fill
+  doesn't recolor them (animate the letters).
+- A per-letter fade costs a layer per fading letter (the "fill-only letters
+  skip isolation" optimization isn't done).
+- The 12 ms ceiling is still missed by scenario 0 (p99 13–15 ms), unchanged.

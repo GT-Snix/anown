@@ -7,6 +7,7 @@
 #include "path_internal.h"
 
 typedef struct ani_channel ani_channel; // timeline_internal.h
+typedef struct ani_glyph ani_glyph;     // font_internal.h
 
 struct an_obj {
     an_kind kind;
@@ -53,7 +54,34 @@ struct an_obj {
         struct { an_vec2 size; } rect;
         struct { float radius; } circle;
         struct { an_vec2 from, to; } line; // also arrows
-        struct { const char *str; float size; } text;
+        // AN_KIND_TEXT: the node that holds the letters (docs/text.md)
+        struct {
+            const char *str;
+            float size;            // em px
+            an_font *font;
+            an_obj **glyphs;       // letters in string order
+            int nglyphs;
+            float total_arc;       // sum of the letters' outline lengths (draw-on)
+            bool size_chaos;       // chaos x the stem-width factor
+            bool inked;            // letters have outlines: draw-on by arc length
+        } text;
+        // AN_KIND_GLYPH: one letter. Its path is the glyph's cached outline scaled
+        // to the size, with the pivot at the local origin; pos = pen + pivot.
+        struct {
+            const ani_glyph *glyph;
+            an_obj *text;          // the text it was laid out in
+            int index;             // in the text's letters
+            an_vec2 pen;           // layout pen position (baseline), text space
+            an_vec2 pivot;         // pivot relative to the pen
+            float arc0;            // outline length of the letters before it
+            float stem_px;         // stem width at scale 1, px
+            float em_px;           // em size, px
+        } glyph;
+        // AN_KIND_CODE: a code block
+        struct {
+            an_obj **bars, **texts;
+            int nlines, first_line;
+        } code;
     } u;
 };
 
@@ -69,6 +97,7 @@ struct an_scene {
     an_obj root;     // hidden group; top-level objects are its children
     uint32_t count;  // objects created, not counting root
     an_obj *named;   // head of the named-object list
+    an_font *font_display, *font_mono; // built-in fonts, loaded on first use
 
     // timeline (docs/timeline.md)
     int64_t cursor;  // ticks (microseconds)
@@ -76,5 +105,27 @@ struct an_scene {
     uint32_t seq;    // track recording counter
     int64_t frame;   // frame reported by an_obj_get (an_seek)
 };
+
+// ---- object creation (scene.c), shared with text.c --------------------------------
+
+// The fields every *_opts struct starts with (AN_OBJ_FIELDS).
+typedef struct ani_common_opts {
+    AN_OBJ_FIELDS
+} ani_common_opts;
+
+// Copy the shared leading fields of any *_opts struct (all begin with
+// AN_OBJ_FIELDS, so they share a common initial sequence).
+#define ANI_COMMON(o) (&(ani_common_opts){                                         \
+    .name = (o)->name, .hidden = (o)->hidden, .parent = (o)->parent, .pos = (o)->pos, .scale = (o)->scale, \
+    .rotation = (o)->rotation, .z = (o)->z, .fill = (o)->fill,                       \
+    .stroke = (o)->stroke, .stroke_width = (o)->stroke_width, .undrawn = (o)->undrawn, \
+    .no_fill = (o)->no_fill, .brush = (o)->brush,                                    \
+    .riso = (o)->riso, .shadow = (o)->shadow, .pattern = (o)->pattern, .paper_under = (o)->paper_under })
+
+// A new object of `kind` at the cursor, with defaults applied to c's fields.
+// NULL on allocation failure, a bad parent, or a duplicate name.
+an_obj *ani_obj_make(an_scene *s, an_kind kind, const ani_common_opts *c);
+// Rect, circle and glyph outlines are opt-in: drawn when a stroke color or width is given.
+bool ani_outline_requested(an_color stroke, float width);
 
 #endif

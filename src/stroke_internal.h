@@ -30,6 +30,9 @@ double ani_boil_disp(const ani_boil *b, int sub, double s, double len, bool clos
 // the points in *out, which live in m's scratch until the next stroke call;
 // -1 on allocation failure.
 int ani_boil_ring(ani_mesh *m, const ani_path *p, ani_affine w, const ani_boil *b, const an_vec2 **out);
+// The same for subpath `sub` (glyph contours: each is boiled as its own closed
+// loop, with the same noise its outline gets).
+int ani_boil_ring_sub(ani_mesh *m, const ani_path *p, int sub, ani_affine w, const ani_boil *b, const an_vec2 **out);
 
 typedef struct ani_stroke_in {
     const ani_path *path;

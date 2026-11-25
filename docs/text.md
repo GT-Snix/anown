@@ -1,6 +1,7 @@
 # Text (Prompt 6): design
 
-Status: approved 2026-11-25 with changes, which are folded in below: snapping
+Status: implemented 2026-11-25 (see "As built" at the end for where the code
+differs from this proposal). Approved 2026-11-25 with changes, which are folded in below: snapping
 relative to the text's own origin, chaos from the on-screen size every frame
 (with a cap found while checking 40–48 px), riso and shadow off for code text,
 riso offset scaled for display text, the winding overflow behavior, and two more
@@ -392,3 +393,59 @@ in the comments.
 6. Per-glyph transforms, tag-draw, stagger.
 7. Code block. `examples/08_text`. Frame bench with a 30 × 60 code block added
    as a scenario.
+
+## As built (2026-11-25)
+
+Where the implementation differs from the proposal above, or settles what it
+left open:
+
+- **Letter paths.** The flattening is shared per (font, glyph) as proposed (in
+  font units, 1/4000 em). Each letter object then gets its own copy of the
+  points scaled to its size, with its pivot at the origin. Stroke widths, boil
+  spacing, patterns and the draw-on arc lengths all work on it unchanged. Cost:
+  about 0.4 KB per letter in the arena.
+- **`pos` of a letter** is pen + pivot in the text's space (the proposal said
+  "relative to the pen"); `an_move_by` offsets it from where layout put it, as
+  intended.
+- **One batch per text object**, not across sibling texts. A text draws as one
+  object: [silhouette] all shadows, [silhouette clear], [paper], all fills, all
+  outlines. Its silhouette is every letter, so a word's shadow never shows
+  inside any of its letters. A code block is one batch per line (about 60
+  stencil-then-cover pairs for 30 lines), measured below.
+- **Fill runs.** A cover quad paints every nonzero sample under it, so letters
+  with different fill colors or patterns can't share a wind/cover pair: a batch
+  splits its fills into runs of one fill.
+- **Patterns on text** are anchored in the text's space, one grid for all its
+  letters (letters' cover quads overlap, so per-letter grids would show seams).
+- **Translucent text** (a letter's fill, outline or shadow below alpha 1,
+  outside a layer) isolates the whole text: one layer, not one per letter. A
+  letter at opacity below 1 gets its own layer, as proposed.
+- **Typewriter** (no outline): letter k shows when draw progress x letters >= k + 1.
+  With an outline, progress runs by arc length and the fill pops in when the
+  letter's outline is complete.
+- **Opts.** `an_text_opts` has `.letters_hidden` and `.letters_undrawn` (start
+  every letter at opacity 0 / draw 0, for per-letter stagger) and `.size_chaos`.
+  `an_code_text(code, n)` returns a line's text. In a code block, the box is at
+  z -2 and the bars at z -1, behind every line.
+- **Fonts are embedded** in the library (`src/fonts.S`, `.incbin`), so programs
+  don't depend on the working directory. `an_font_load` reads other files.
+- **No stencil buffer, no text:** a renderer without a depth-stencil main
+  target skips glyph fills. Both targets always have one (rule 7).
+- **Over-budget replay** keeps the winding and cover passes (they only need the
+  target's stencil) and drops the cut, as for shapes.
+
+Measured:
+
+- **Small text (problem 2), `examples/spike_text_quality`.** JetBrains Mono at
+  30 px through the pipeline (4x MSAA, snapped) against stb_truetype's 256-level
+  rasterizer at the same pen positions: mean coverage error 0.045, max 0.52,
+  1.7% of inked pixels off by more than 0.25 (all on edges). Stems 2.77 px vs
+  stb's 2.72 ('l'), identical for every repeated letter. At 28 px: mean 0.048,
+  1.4% over 0.25. **Fix 2 (supersampled text layers) isn't needed** and wasn't
+  built. Comparison image: `out/text_quality_30.png`.
+- **Code block cost**, `spike_frame_bench 5`: a 30 x 60 block at 24 px (~70%
+  non-space, line numbers, a highlight stepping down the lines), 131k triangles:
+  median 6.1 ms, p99 6.6–6.8 ms, 0 frames over 12 ms (3 runs, CPU quiet).
+- **Overlapping contours in the fonts:** not scanned for. The overlap test
+  stacks two letters in one batch instead, which reaches the same code (winding
+  2 must fill) and doesn't depend on what the fonts happen to contain.

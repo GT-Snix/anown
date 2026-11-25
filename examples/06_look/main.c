@@ -1,5 +1,5 @@
-// 06_look: the chaos dial from 0 to 1 on text-free content (shapes only; text
-// isn't drawn yet). The scene's chaos holds at 0, ramps to 1 over 3 s, then
+// 06_look: the chaos dial from 0 to 1 on shapes (08_text shows text with the
+// look). The scene's chaos holds at 0, ramps to 1 over 3 s, then
 // holds. As it rises, boil, riso misregistration, hard shadows, paper grain and
 // the vignette all come up together. A "legend" group is pinned at chaos 0 with
 // the per-object multiplier, the legibility control for key content.

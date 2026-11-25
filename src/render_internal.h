@@ -43,8 +43,9 @@ typedef struct ani_layer_rect {
 typedef struct ani_renderer {
     // main target
     sg_pipeline pip_main, pip_comp_main, pip_paper;
-    // main-target stencil pipelines (only when the main pass has a depth-stencil buffer)
-    sg_pipeline pip_main_shadow, pip_main_sil, pip_main_silclr;
+    // main-target stencil pipelines, by paint (only when the main pass has a
+    // depth-stencil buffer): shadows, silhouettes, winding and cover
+    sg_pipeline pip_main_st[ANI_PAINT_COUNT];
     bool main_stencil;
     // layer targets: one per paint (index ani_paint), plus composite
     sg_pipeline pip_layer[ANI_PAINT_COUNT], pip_comp_layer;

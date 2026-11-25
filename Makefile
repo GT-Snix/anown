@@ -23,7 +23,9 @@ LDLIBS   := -framework Metal -framework AppKit -framework QuartzCore
 
 LIB_SRC  := $(wildcard src/*.c)
 LIB_MSRC := $(wildcard src/*.m)
-LIB_OBJ  := $(LIB_SRC:src/%.c=$(BUILD)/obj/%.o) $(LIB_MSRC:src/%.m=$(BUILD)/obj/%.o)
+LIB_SSRC := $(wildcard src/*.S)
+LIB_OBJ  := $(LIB_SRC:src/%.c=$(BUILD)/obj/%.o) $(LIB_MSRC:src/%.m=$(BUILD)/obj/%.o) $(LIB_SSRC:src/%.S=$(BUILD)/obj/%.o)
+FONTS    := $(wildcard assets/fonts/*.ttf)
 LIB      := $(BUILD)/libanown.a
 
 SHADERS  := $(wildcard shaders/*.glsl)
@@ -61,7 +63,12 @@ $(BUILD)/obj/sokol_impl.o: src/sokol_impl.m
 	@mkdir -p $(dir $@)
 	$(CC) $(OBJCFLAGS) -c $< -o $@
 
-# stb_image_write: vendor code, so no -Werror (and no -Wpedantic)
+# the built-in fonts, embedded with .incbin (src/fonts.S)
+$(BUILD)/obj/fonts.o: src/fonts.S $(FONTS)
+	@mkdir -p $(dir $@)
+	$(CC) -arch arm64 -c $< -o $@
+
+# stb_image_write and stb_truetype: vendor code, so no -Werror (and no -Wpedantic)
 $(BUILD)/obj/stb_impl.o: src/stb_impl.c
 	@mkdir -p $(dir $@)
 	$(CC) $(filter-out -Werror -Wpedantic,$(CFLAGS)) -c $< -o $@

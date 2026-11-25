@@ -85,11 +85,7 @@ bool an_obj_set_parent(an_obj *o, an_obj *parent) {
 
 // ---- creation ---------------------------------------------------------------
 
-typedef struct common_opts {
-    AN_OBJ_FIELDS
-} common_opts;
-
-static an_obj *make(an_scene *s, an_kind kind, const common_opts *c) {
+an_obj *ani_obj_make(an_scene *s, an_kind kind, const ani_common_opts *c) {
     if (!s) return NULL;
     an_obj *p = resolve_parent(s, c->parent);
     if (!p) return NULL;
@@ -150,17 +146,8 @@ static an_obj *make(an_scene *s, an_kind kind, const common_opts *c) {
     return o;
 }
 
-// Copy the shared leading fields of any *_opts struct (all begin with
-// AN_OBJ_FIELDS, so they share a common initial sequence).
-#define COMMON(o) (&(common_opts){                                        \
-    .name = (o)->name, .hidden = (o)->hidden, .parent = (o)->parent, .pos = (o)->pos, .scale = (o)->scale,         \
-    .rotation = (o)->rotation, .z = (o)->z, .fill = (o)->fill,           \
-    .stroke = (o)->stroke, .stroke_width = (o)->stroke_width, .undrawn = (o)->undrawn, \
-    .no_fill = (o)->no_fill, .brush = (o)->brush, \
-    .riso = (o)->riso, .shadow = (o)->shadow, .pattern = (o)->pattern, .paper_under = (o)->paper_under })
-
 // Rect and circle outlines are opt-in: drawn when a stroke color or width is given.
-static bool outline_requested(an_color stroke, float width) {
+bool ani_outline_requested(an_color stroke, float width) {
     return stroke.a > 0.0f || width > 0.0f;
 }
 
@@ -181,7 +168,7 @@ an_obj *an_rect(an_scene *s, const an_rect_opts *opts) {
     const an_vec2 size = (o.size.x > 0 || o.size.y > 0) ? o.size : (an_vec2){ 100, 100 };
     ani_path *path = ani_path_rect(&s->arena, size);
     if (!path) return NULL;
-    an_obj *r = with_path(make(s, AN_KIND_RECT, COMMON(&o)), path, outline_requested(o.stroke, o.stroke_width));
+    an_obj *r = with_path(ani_obj_make(s, AN_KIND_RECT, ANI_COMMON(&o)), path, ani_outline_requested(o.stroke, o.stroke_width));
     if (r) r->u.rect.size = size;
     return r;
 }
@@ -192,7 +179,7 @@ an_obj *an_circle(an_scene *s, const an_circle_opts *opts) {
     const float radius = o.radius > 0 ? o.radius : 50.0f;
     ani_path *path = ani_path_circle(&s->arena, radius);
     if (!path) return NULL;
-    an_obj *c = with_path(make(s, AN_KIND_CIRCLE, COMMON(&o)), path, outline_requested(o.stroke, o.stroke_width));
+    an_obj *c = with_path(ani_obj_make(s, AN_KIND_CIRCLE, ANI_COMMON(&o)), path, ani_outline_requested(o.stroke, o.stroke_width));
     if (c) c->u.circle.radius = radius;
     return c;
 }
@@ -202,7 +189,7 @@ an_obj *an_line(an_scene *s, const an_line_opts *opts) {
     if (!s) return NULL;
     ani_path *path = ani_path_line(&s->arena, o.from, o.to);
     if (!path) return NULL;
-    an_obj *l = with_path(make(s, AN_KIND_LINE, COMMON(&o)), path, true);
+    an_obj *l = with_path(ani_obj_make(s, AN_KIND_LINE, ANI_COMMON(&o)), path, true);
     if (l) {
         l->u.line.from = o.from;
         l->u.line.to = o.to;
@@ -218,7 +205,7 @@ an_obj *an_arrow(an_scene *s, const an_arrow_opts *opts) {
     if (head < 16.0f && !(o.head > 0.0f)) head = 16.0f;
     ani_path *path = ani_path_arrow(&s->arena, o.from, o.to, head);
     if (!path) return NULL;
-    an_obj *a = with_path(make(s, AN_KIND_ARROW, COMMON(&o)), path, true);
+    an_obj *a = with_path(ani_obj_make(s, AN_KIND_ARROW, ANI_COMMON(&o)), path, true);
     if (a) {
         a->u.line.from = o.from;
         a->u.line.to = o.to;
@@ -231,25 +218,12 @@ an_obj *an_stroke(an_scene *s, const an_stroke_opts *opts) {
     if (!s) return NULL;
     ani_path *path = ani_path_segs(&s->arena, o.segs, o.segs ? o.seg_count : 0);
     if (!path) return NULL;
-    return with_path(make(s, AN_KIND_STROKE, COMMON(&o)), path, true);
-}
-
-an_obj *an_text(an_scene *s, const an_text_opts *opts) {
-    const an_text_opts o = opts ? *opts : (an_text_opts){ 0 };
-    if (!s) return NULL;
-    const char *str = ani_arena_strdup(&s->arena, o.text); // before make(): no half-built object
-    if (!str) return NULL;
-    an_obj *t = make(s, AN_KIND_TEXT, COMMON(&o));
-    if (t) {
-        t->u.text.str = str;
-        t->u.text.size = o.size > 0 ? o.size : 48.0f;
-    }
-    return t;
+    return with_path(ani_obj_make(s, AN_KIND_STROKE, ANI_COMMON(&o)), path, true);
 }
 
 an_obj *an_group(an_scene *s, const an_group_opts *opts) {
     const an_group_opts o = opts ? *opts : (an_group_opts){ 0 };
-    return make(s, AN_KIND_GROUP, COMMON(&o));
+    return ani_obj_make(s, AN_KIND_GROUP, ANI_COMMON(&o));
 }
 
 // ---- getters (setters live in timeline.c) ---------------------------------

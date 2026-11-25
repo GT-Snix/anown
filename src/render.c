@@ -107,6 +107,60 @@ static sg_stencil_state stencil(sg_compare_func cmp, sg_stencil_op pass, uint8_t
 #define ST_INK_L    stencil(SG_COMPAREFUNC_NOT_EQUAL, SG_STENCILOP_REPLACE, 0x30, 0x70, 0x70)
 #define ST_CLEAR_L  stencil(SG_COMPAREFUNC_ALWAYS, SG_STENCILOP_REPLACE, 0x00, 0xFF, 0xFF)
 
+// Stencil-then-cover (docs/text.md, problem 1). Winding: front faces +1, back
+// faces -1, wrapping, on the counter bits 0x0F only, where `cmp` passes. The
+// counter holds the winding number mod 16: exact for |w| 1..15; a nonzero
+// multiple of 16 reads as 0 (that sample stays unpainted).
+static sg_stencil_state wind(sg_compare_func cmp, uint8_t ref, uint8_t read) {
+    const sg_stencil_face_state fr = { .compare = cmp, .fail_op = SG_STENCILOP_KEEP,
+                                       .depth_fail_op = SG_STENCILOP_KEEP, .pass_op = SG_STENCILOP_INCR_WRAP };
+    sg_stencil_face_state bk = fr;
+    bk.pass_op = SG_STENCILOP_DECR_WRAP;
+    return (sg_stencil_state){ .enabled = true, .front = fr, .back = bk, .read_mask = read, .write_mask = 0x0F, .ref = ref };
+}
+//   wind:             everywhere
+//   wind shadow cut:  where the silhouette bit is clear
+//   wind shadow (layer, translucent): silhouette clear and no shadow mark yet
+//                     (the same test as ST_SHADOW_L)
+//   cover:            where the counter is nonzero; REPLACE with ref 0 zeroes it
+//                     (the ref's counter bits are 0, so the compare is "!= 0")
+//   cover shadow:     the same, also writing the shadow mark 0x70
+//   cover silhouette: the same, also setting the silhouette bit 0x80
+#define ST_WIND        wind(SG_COMPAREFUNC_ALWAYS, 0x00, 0x00)
+#define ST_WIND_CUT    wind(SG_COMPAREFUNC_EQUAL, 0x00, 0x80)
+#define ST_WIND_SH_L   wind(SG_COMPAREFUNC_GREATER, 0x70, 0xF0)
+#define ST_COVER       stencil(SG_COMPAREFUNC_NOT_EQUAL, SG_STENCILOP_REPLACE, 0x00, 0x0F, 0x0F)
+#define ST_COVER_SH_L  stencil(SG_COMPAREFUNC_NOT_EQUAL, SG_STENCILOP_REPLACE, 0x70, 0x0F, 0x7F)
+#define ST_COVER_SIL   stencil(SG_COMPAREFUNC_NOT_EQUAL, SG_STENCILOP_REPLACE, 0x80, 0x0F, 0x8F)
+
+// The stencil state of each paint (DIRECT and BACKGROUND have none).
+static sg_stencil_state stencil_of(ani_paint p) {
+    switch (p) {
+    case ANI_PAINT_SHADOW: return ST_SHADOW_L;
+    case ANI_PAINT_FILL: return ST_FILL_L;
+    case ANI_PAINT_INK: return ST_INK_L;
+    case ANI_PAINT_STENCIL_CLEAR: return ST_CLEAR_L;
+    case ANI_PAINT_SILHOUETTE: return ST_SIL;
+    case ANI_PAINT_SILHOUETTE_CLEAR: return ST_SILCLR;
+    case ANI_PAINT_SHADOW_CUT: return ST_SHADOW_M;
+    case ANI_PAINT_WIND:
+    case ANI_PAINT_WIND_SIL: return ST_WIND;
+    case ANI_PAINT_WIND_SHADOW_CUT: return ST_WIND_CUT;
+    case ANI_PAINT_WIND_SHADOW: return ST_WIND_SH_L;
+    case ANI_PAINT_COVER: return ST_COVER;
+    case ANI_PAINT_COVER_SHADOW: return ST_COVER_SH_L;
+    case ANI_PAINT_COVER_SIL: return ST_COVER_SIL;
+    default: return (sg_stencil_state){ 0 };
+    }
+}
+
+// Paints that only write the stencil.
+static bool color_off(ani_paint p) {
+    return p == ANI_PAINT_STENCIL_CLEAR || p == ANI_PAINT_SILHOUETTE || p == ANI_PAINT_SILHOUETTE_CLEAR ||
+           p == ANI_PAINT_WIND || p == ANI_PAINT_WIND_SIL || p == ANI_PAINT_WIND_SHADOW_CUT ||
+           p == ANI_PAINT_WIND_SHADOW || p == ANI_PAINT_COVER_SIL;
+}
+
 static sg_pipeline make_comp_pip(sg_shader shd, sg_pixel_format cf, sg_pixel_format df, int samples, const char *label) {
     return sg_make_pipeline(&(sg_pipeline_desc){
         .shader = shd,
@@ -149,22 +203,25 @@ bool ani_renderer_init(ani_renderer *r, sg_pixel_format color_format,
 
     // main target: shadow masking needs its depth-stencil buffer
     r->main_stencil = depth_format == SG_PIXELFORMAT_DEPTH_STENCIL;
+    // the main target only draws opaque paints, so it has no write-once marks:
+    // translucent shadows, inks and fills there are replays (no stencil states)
+    static const ani_paint main_st[] = { ANI_PAINT_SHADOW_CUT, ANI_PAINT_SILHOUETTE, ANI_PAINT_SILHOUETTE_CLEAR,
+                                         ANI_PAINT_WIND, ANI_PAINT_WIND_SIL, ANI_PAINT_WIND_SHADOW_CUT,
+                                         ANI_PAINT_COVER, ANI_PAINT_COVER_SIL };
     if (r->main_stencil) {
-        const sg_stencil_state sm = ST_SHADOW_M, ss = ST_SIL, sc = ST_SILCLR;
-        r->pip_main_shadow = make_shape_pip(r->shape_shd, color_format, depth_format, sample_count, &sm, false, "anown-main-shadow");
-        r->pip_main_sil = make_shape_pip(r->shape_shd, color_format, depth_format, sample_count, &ss, true, "anown-main-silhouette");
-        r->pip_main_silclr = make_shape_pip(r->shape_shd, color_format, depth_format, sample_count, &sc, true, "anown-main-silhouette-clear");
+        for (size_t i = 0; i < sizeof main_st / sizeof main_st[0]; i++) {
+            const ani_paint p = main_st[i];
+            const sg_stencil_state st = stencil_of(p);
+            r->pip_main_st[p] = make_shape_pip(r->shape_shd, color_format, depth_format, sample_count, &st,
+                                               color_off(p), "anown-main-stencil");
+        }
     }
-    const sg_stencil_state s1 = ST_SHADOW_L, s2 = ST_FILL_L, s3 = ST_INK_L, s0 = ST_CLEAR_L, sl = ST_SIL, slc = ST_SILCLR;
-    r->pip_layer[ANI_PAINT_DIRECT] = make_shape_pip(r->shape_shd, LAYER_COLOR_FMT, LAYER_DS_FMT, ANI_LAYER_SAMPLES, NULL, false, "anown-layer-direct");
-    r->pip_layer[ANI_PAINT_SHADOW] = make_shape_pip(r->shape_shd, LAYER_COLOR_FMT, LAYER_DS_FMT, ANI_LAYER_SAMPLES, &s1, false, "anown-layer-shadow");
-    r->pip_layer[ANI_PAINT_FILL] = make_shape_pip(r->shape_shd, LAYER_COLOR_FMT, LAYER_DS_FMT, ANI_LAYER_SAMPLES, &s2, false, "anown-layer-fill");
-    r->pip_layer[ANI_PAINT_INK] = make_shape_pip(r->shape_shd, LAYER_COLOR_FMT, LAYER_DS_FMT, ANI_LAYER_SAMPLES, &s3, false, "anown-layer-ink");
-    r->pip_layer[ANI_PAINT_STENCIL_CLEAR] = make_shape_pip(r->shape_shd, LAYER_COLOR_FMT, LAYER_DS_FMT, ANI_LAYER_SAMPLES, &s0, true, "anown-layer-stencil-clear");
-    r->pip_layer[ANI_PAINT_SILHOUETTE] = make_shape_pip(r->shape_shd, LAYER_COLOR_FMT, LAYER_DS_FMT, ANI_LAYER_SAMPLES, &sl, true, "anown-layer-silhouette");
-    r->pip_layer[ANI_PAINT_SILHOUETTE_CLEAR] = make_shape_pip(r->shape_shd, LAYER_COLOR_FMT, LAYER_DS_FMT, ANI_LAYER_SAMPLES, &slc, true, "anown-layer-silhouette-clear");
-    const sg_stencil_state sh_cut = ST_SHADOW_M;
-    r->pip_layer[ANI_PAINT_SHADOW_CUT] = make_shape_pip(r->shape_shd, LAYER_COLOR_FMT, LAYER_DS_FMT, ANI_LAYER_SAMPLES, &sh_cut, false, "anown-layer-shadow-cut");
+    for (int p = 0; p < ANI_PAINT_COUNT; p++) {
+        if (p == ANI_PAINT_BACKGROUND) continue; // main only
+        const sg_stencil_state st = stencil_of((ani_paint)p);
+        r->pip_layer[p] = make_shape_pip(r->shape_shd, LAYER_COLOR_FMT, LAYER_DS_FMT, ANI_LAYER_SAMPLES,
+                                         p == ANI_PAINT_DIRECT ? NULL : &st, color_off((ani_paint)p), "anown-layer");
+    }
     r->pip_comp_layer = make_comp_pip(r->comp_shd, LAYER_COLOR_FMT, LAYER_DS_FMT, ANI_LAYER_SAMPLES, "anown-comp-layer");
 
     bool ok = sg_query_pipeline_state(r->pip_main) == SG_RESOURCESTATE_VALID &&
@@ -176,9 +233,8 @@ bool ani_renderer_init(ani_renderer *r, sg_pixel_format color_format,
         ok = ok && sg_query_pipeline_state(r->pip_layer[i]) == SG_RESOURCESTATE_VALID;
     }
     if (r->main_stencil) {
-        ok = ok && sg_query_pipeline_state(r->pip_main_shadow) == SG_RESOURCESTATE_VALID &&
-             sg_query_pipeline_state(r->pip_main_sil) == SG_RESOURCESTATE_VALID &&
-             sg_query_pipeline_state(r->pip_main_silclr) == SG_RESOURCESTATE_VALID;
+        for (size_t i = 0; i < sizeof main_st / sizeof main_st[0]; i++)
+            ok = ok && sg_query_pipeline_state(r->pip_main_st[main_st[i]]) == SG_RESOURCESTATE_VALID;
     }
     return ok;
 }
@@ -202,10 +258,10 @@ void ani_renderer_shutdown(ani_renderer *r) {
     sg_destroy_pipeline(r->pip_comp_main);
     sg_destroy_pipeline(r->pip_paper);
     sg_destroy_shader(r->paper_shd);
-    for (int i = 0; i < ANI_PAINT_COUNT; i++) sg_destroy_pipeline(r->pip_layer[i]);
-    sg_destroy_pipeline(r->pip_main_shadow);
-    sg_destroy_pipeline(r->pip_main_sil);
-    sg_destroy_pipeline(r->pip_main_silclr);
+    for (int i = 0; i < ANI_PAINT_COUNT; i++) {
+        sg_destroy_pipeline(r->pip_layer[i]);
+        sg_destroy_pipeline(r->pip_main_st[i]);
+    }
     sg_destroy_pipeline(r->pip_comp_layer);
     sg_destroy_shader(r->shape_shd);
     sg_destroy_shader(r->comp_shd);
@@ -359,20 +415,31 @@ static void draw_target(ani_renderer *r, const target_ctx *t, int list, float al
             draw_paper(r, c);
             continue;
         }
-        const bool sil = c->paint == ANI_PAINT_SILHOUETTE || c->paint == ANI_PAINT_SILHOUETTE_CLEAR;
+        const ani_paint pt = c->paint;
+        const bool sil = pt == ANI_PAINT_SILHOUETTE || pt == ANI_PAINT_SILHOUETTE_CLEAR || pt == ANI_PAINT_WIND_SIL ||
+                         pt == ANI_PAINT_COVER_SIL;
+        // stencil-then-cover paints, reduced to their plain forms (replays, and
+        // the main target, which never has write-once marks)
+        const bool winding = pt == ANI_PAINT_WIND || pt == ANI_PAINT_WIND_SHADOW_CUT || pt == ANI_PAINT_WIND_SHADOW;
+        const bool cover = pt == ANI_PAINT_COVER || pt == ANI_PAINT_COVER_SHADOW;
         if (main) {
-            if (c->paint == ANI_PAINT_STENCIL_CLEAR) continue; // only in replays
+            if (pt == ANI_PAINT_STENCIL_CLEAR) continue; // only in replays
             if (sil && !r->main_stencil) continue;   // no stencil buffer: shadows unmasked
-            if (c->paint == ANI_PAINT_SILHOUETTE) pip = r->pip_main_sil;
-            else if (c->paint == ANI_PAINT_SILHOUETTE_CLEAR) pip = r->pip_main_silclr;
-            else if ((c->paint == ANI_PAINT_SHADOW_CUT || c->paint == ANI_PAINT_SHADOW) && r->main_stencil) pip = r->pip_main_shadow;
+            if ((winding || cover) && !r->main_stencil) continue; // glyph fills need a stencil buffer
+            if (sil) pip = r->pip_main_st[pt];
+            else if (winding) pip = r->pip_main_st[pt == ANI_PAINT_WIND_SHADOW ? ANI_PAINT_WIND_SHADOW_CUT : pt];
+            else if (cover) pip = r->pip_main_st[ANI_PAINT_COVER];
+            else if ((pt == ANI_PAINT_SHADOW_CUT || pt == ANI_PAINT_SHADOW) && r->main_stencil) pip = r->pip_main_st[ANI_PAINT_SHADOW_CUT];
             else pip = r->pip_main;
         } else if (replay) {
-            // over-budget fallback: drawn straight into the parent, no stencil at all
-            if (c->paint == ANI_PAINT_STENCIL_CLEAR || sil) continue;
-            pip = r->pip_layer[ANI_PAINT_DIRECT];
+            // over-budget fallback: drawn straight into the parent, no write-once
+            // marks and no cut; glyph fills keep their winding and cover passes
+            if (pt == ANI_PAINT_STENCIL_CLEAR || sil) continue;
+            if (winding) pip = r->pip_layer[ANI_PAINT_WIND];
+            else if (cover) pip = r->pip_layer[ANI_PAINT_COVER];
+            else pip = r->pip_layer[ANI_PAINT_DIRECT];
         } else {
-            pip = r->pip_layer[c->paint];
+            pip = r->pip_layer[pt];
         }
         sg_apply_pipeline(pip);
         sg_apply_bindings(&(sg_bindings){ .vertex_buffers[0] = r->vbuf });

@@ -99,7 +99,31 @@ static double now_ms(void) {
 // scenario 0: everything opaque (direct path)
 // scenario 1: the 50 shapes fade in together over 2 s (50 isolated layers per frame)
 // scenario 2: everything in one group fading in over the whole timeline (1 big layer)
+// scenario 5: a 30-line x 60-column code block (24 px, ~70% non-space), line
+// numbers, a highlight bar stepping down one line every 0.2 s, for 6 s
+static an_scene *build_code(void) {
+    an_scene *s = an_scene_create(&(an_scene_desc){ .fps = 60, .seed = 7 });
+    static char code[30 * 61 + 1];
+    an_rng *rng = an_scene_rng(s);
+    static const char alphabet[] = "abcdefghijklmnopqrstuvwxyz0123456789()[]{};=+-*<>_,.";
+    char *p = code;
+    for (int l = 0; l < 30; l++) {
+        for (int c = 0; c < 60; c++) {
+            *p++ = an_rng_float(rng) < 0.3f ? ' ' : alphabet[an_rng_below(rng, sizeof alphabet - 1)];
+        }
+        *p++ = l < 29 ? '\n' : 0;
+    }
+    an_obj *blk = an_code(s, &(an_code_opts){ .pos = { 400, 40 }, .size = 24, .code = code, .line_numbers = true });
+    for (int l = 1; l <= 30; l++) {
+        an_obj_set_opacity(an_code_line(blk, l), 1.0f);
+        an_wait(s, 0.2f);
+        an_obj_set_opacity(an_code_line(blk, l), 0.0f);
+    }
+    return s;
+}
+
 static an_scene *build(int scenario) {
+    if (scenario == 5) return build_code();
     // default style: chaos 1, paper grain + vignette, riso on everything with ink;
     // scenario 3 also turns hard shadows on for every object
     an_scene *s = an_scene_create(&(an_scene_desc){ .fps = 60, .seed = 7, .style = { .shadow = scenario == 3,
@@ -238,9 +262,9 @@ int main(int argc, char **argv) {
             worst_frame = f;
         }
     }
-    static const char *names[5] = { "opaque (direct path)", "50 shapes fading together",
+    static const char *names[6] = { "opaque (direct path)", "50 shapes fading together",
                                     "everything in one fading group", "opaque, shadows on",
-                                    "opaque, paper grain and vignette off" };
+                                    "opaque, paper grain and vignette off", "30 x 60 code block" };
     if (!machine_quiet("after the run")) return 3;
     printf("200 strokes + 50 filled shapes, scenario %d: %s, %lld frames, up to %d triangles, up to %d layers/frame\n",
            scenario, names[scenario], (long long)(L + 1), max_tris, max_layers);
