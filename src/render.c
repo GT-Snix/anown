@@ -546,7 +546,8 @@ bool ani_renderer_prepare(ani_renderer *r, const an_scene *s, int64_t frame, int
     r->prof_upload = uptime_s();
 
     // paper background: grain and vignette scale with the scene's chaos at this frame;
-    // grain steps at 12 Hz unless asked for every frame ((N * 12) / fps, integer)
+    // grain steps at 12 Hz unless asked for every frame ((N * 12) / fps, integer),
+    // or is static (step 0 on every frame: the same texture)
     {
         const an_style *st = &s->style;
         const float chaos = (float)ani_scene_chaos_at((an_scene *)s, ani_frame_time(s, frame)); // reads only
@@ -560,7 +561,8 @@ bool ani_renderer_prepare(ani_renderer *r, const an_scene *s, int64_t frame, int
         r->seed_lo = (uint32_t)s->seed;
         r->seed_hi = (uint32_t)(s->seed >> 32);
         const int64_t f = frame < 0 ? 0 : frame;
-        r->grain_step = (uint32_t)(st->grain_every_frame ? f : (f * 12) / s->fps);
+        const bool still = st->grain_mode == AN_GRAIN_STATIC || (st->grain_mode == AN_GRAIN_AUTO && r->grain_auto_static);
+        r->grain_step = still ? 0u : (uint32_t)(st->grain_every_frame ? f : (f * 12) / s->fps);
     }
 
     // layers: bounds, memory, then render deepest first

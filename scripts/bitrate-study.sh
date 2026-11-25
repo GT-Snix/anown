@@ -5,9 +5,11 @@
 # arguments as an_scene_export, and measures each against its source frames:
 # size, Mbps, PSNR and SSIM (RGB, all frames), and grain retained on a paper-only
 # patch (spike_grain_measure). Writes 4x crops of text and riso edges as
-# montages: row 1 source + 420 at CRF 18..27, row 2 source + 444 at CRF 18..27.
+# montages: row 1 source + 420 at each CRF, row 2 source + 444 at each CRF.
 #
 #   scripts/bitrate-study.sh            -> out/bitrate/results.tsv, out/bitrate/crops/
+#   GRAINS="0.06s" CRFS="18 21" RESULTS=static.tsv scripts/bitrate-study.sh
+#       other clip sets (src/<clip>_g<GRAIN>) and CRFs; crops at the first two CRFs
 set -eu
 cd "$(dirname "$0")/.."
 OUT=out/bitrate
@@ -35,19 +37,22 @@ clip_crops() {
     esac
 }
 
-printf 'clip\tgrain\tfmt\tcrf\tbytes\tMbps\tPSNR\tSSIM\tretained\tcorr\ttemporal\n' > $OUT/results.tsv
+GRAINS=${GRAINS:-0.03 0.045 0.06}
+CRFS=${CRFS:-18 21 24 27}
+RESULTS=$OUT/${RESULTS:-results.tsv}
+printf 'clip\tgrain\tfmt\tcrf\tbytes\tMbps\tPSNR\tSSIM\tretained\tcorr\ttemporal\n' > $RESULTS
 for clip in text look; do
     set -- $(clip_info $clip)
     first=$1 prefix=$2 patch=$3
     pw=${patch%%:*}; rest=${patch#*:}; ph=${rest%%:*}
-    for g in 0.03 0.045 0.06; do
+    for g in $GRAINS; do
         dir=$SRC/${clip}_g$g
         in="-framerate $FPS -start_number $first -i $dir/${prefix}_%04d.png"
         # the source patch, grey
         ffmpeg -v error -y $in -frames:v $NFR -vf "format=rgb24,crop=$patch,format=gray" -f rawvideo $ENC/src.gray
         for fmt in 420 444; do
             if [ $fmt = 420 ]; then pf="-pix_fmt yuv420p"; else pf="-pix_fmt yuv444p -profile:v high444"; fi
-            for crf in 18 21 24 27; do
+            for crf in $CRFS; do
                 f=$ENC/${clip}_g${g}_${fmt}_crf$crf.mp4
                 ffmpeg -v error -y $in -frames:v $NFR -vf scale=out_color_matrix=bt709:out_range=tv,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv \
                     -c:v libx264 -preset medium -crf $crf $pf \
@@ -61,7 +66,7 @@ for clip in text look; do
                 ffmpeg -v error -y -i "$f" -vf "$DEC,format=rgb24,crop=$patch,format=gray" -f rawvideo $ENC/dec.gray
                 gm=$($MEASURE $pw $ph $ENC/src.gray $ENC/dec.gray)
                 ret=$(echo "$gm" | awk '{print $2}'); cor=$(echo "$gm" | awk '{print $4}'); tmp=$(echo "$gm" | awk '{print $6}')
-                printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' $clip $g $fmt $crf $bytes $mbps "$psnr" "$ssim" $ret $cor $tmp >> $OUT/results.tsv
+                printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' $clip $g $fmt $crf $bytes $mbps "$psnr" "$ssim" $ret $cor $tmp >> $RESULTS
                 echo "$clip g$g $fmt crf$crf: $mbps Mbps PSNR $psnr SSIM $ssim grain $gm"
             done
         done
@@ -72,20 +77,22 @@ for clip in text look; do
             cw=${box%%:*}; r2=${box#*:}; ch=${r2%%:*}
             up="crop=$box,scale=iw*4:ih*4:flags=neighbor"
             ffmpeg -v error -y -i $dir/${prefix}_$n.png -vf "format=rgb24,$up" $ENC/crop_src.png
+            tw=$((cw * 4)); th=$((ch * 4))
+            inputs=""; layout=""; k=0; row=0
             for fmt in 420 444; do
-                for crf in 18 21 24 27; do
+                col=0
+                inputs="$inputs -i $ENC/crop_src.png"; layout="$layout|$((col * tw))_$((row * th))"; k=$((k + 1)); col=1
+                for crf in $CRFS; do
                     ffmpeg -v error -y -i $ENC/${clip}_g${g}_${fmt}_crf$crf.mp4 \
                         -vf "select=eq(n\,120),$DEC,format=rgb24,$up" -frames:v 1 $ENC/crop_${fmt}_$crf.png
+                    inputs="$inputs -i $ENC/crop_${fmt}_$crf.png"; layout="$layout|$((col * tw))_$((row * th))"
+                    k=$((k + 1)); col=$((col + 1))
                 done
+                row=1
             done
-            tw=$((cw * 4)); th=$((ch * 4))
-            ffmpeg -v error -y -i $ENC/crop_src.png -i $ENC/crop_420_18.png -i $ENC/crop_420_21.png -i $ENC/crop_420_24.png \
-                -i $ENC/crop_420_27.png -i $ENC/crop_src.png -i $ENC/crop_444_18.png -i $ENC/crop_444_21.png \
-                -i $ENC/crop_444_24.png -i $ENC/crop_444_27.png -filter_complex \
-                "xstack=inputs=10:layout=0_0|${tw}_0|$((2*tw))_0|$((3*tw))_0|$((4*tw))_0|0_${th}|${tw}_${th}|$((2*tw))_${th}|$((3*tw))_${th}|$((4*tw))_${th}" \
-                $CROPS/${clip}_${name}_g$g.png
+            ffmpeg -v error -y $inputs -filter_complex "xstack=inputs=$k:layout=${layout#|}" $CROPS/${clip}_${name}_g$g.png
         done
     done
 done
 rm -f $ENC/src.gray $ENC/dec.gray $ENC/crop_*.png
-echo "results: $OUT/results.tsv; crops: $CROPS/"
+echo "results: $RESULTS; crops: $CROPS/"

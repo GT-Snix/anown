@@ -70,6 +70,7 @@ int64_t an_scene_export(an_scene *s, const an_export_desc *desc) {
     const bool gpu_ok = ani_offscreen_make_ds(&off, s->width, s->height, EXPORT_SAMPLES)
                      && ani_renderer_init(&r, SG_PIXELFORMAT_RGBA8, SG_PIXELFORMAT_DEPTH_STENCIL, EXPORT_SAMPLES);
     ani_pool_pop(pool);
+    r.grain_auto_static = !master; // AN_GRAIN_AUTO: share exports get static grain
     unsigned char *pixels = gpu_ok ? malloc(ani_offscreen_frame_bytes(&off)) : NULL;
     if (!pixels) {
         fprintf(stderr, "anown: export setup failed\n");

@@ -10,7 +10,7 @@
 //   ./build/examples/08_text                       preview
 //   ./build/examples/08_text --export out/text.mp4  the whole timeline
 //   ./build/examples/08_text --frames DIR [STEP [FIRST LAST]]  PNG every STEP-th frame (default 5)
-//   any of them with --grain G first: paper grain G instead of 0.06 (bitrate study)
+//   any of them with --grain G and/or --static-grain first (bitrate study)
 #include "anown.h"
 
 #include <stdio.h>
@@ -19,13 +19,22 @@
 
 int main(int argc, char **argv) {
     float grain = 0.0f; // 0: the default
-    if (argc >= 3 && strcmp(argv[1], "--grain") == 0) {
-        grain = (float)atof(argv[2]);
-        argc -= 2;
-        argv += 2;
+    an_grain_mode grain_mode = AN_GRAIN_AUTO;
+    for (;;) {
+        if (argc >= 3 && strcmp(argv[1], "--grain") == 0) {
+            grain = (float)atof(argv[2]);
+            argc -= 2;
+            argv += 2;
+        } else if (argc >= 2 && strcmp(argv[1], "--static-grain") == 0) {
+            grain_mode = AN_GRAIN_STATIC;
+            argc -= 1;
+            argv += 1;
+        } else {
+            break;
+        }
     }
     const an_palette *pal = &AN_PALETTE_RIOT;
-    an_scene *s = an_scene_create(&(an_scene_desc){ .fps = 60, .seed = 8, .style = { .palette = pal, .shadow = true, .grain = grain } });
+    an_scene *s = an_scene_create(&(an_scene_desc){ .fps = 60, .seed = 8, .style = { .palette = pal, .shadow = true, .grain = grain, .grain_mode = grain_mode } });
     if (!s) return 1;
 
     // title: drawn on, then hops

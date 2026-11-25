@@ -75,6 +75,14 @@ const an_palette *an_palette_named(const char *name);
  * the scene / the rule; AN_ON and AN_OFF force it. */
 typedef enum an_toggle { AN_AUTO = 0, AN_ON, AN_OFF } an_toggle;
 
+/* Paper grain over time (docs/progress.md, "Grain modes"). */
+typedef enum an_grain_mode {
+    AN_GRAIN_AUTO = 0,  /* static in AN_EXPORT_SHARE exports (it compresses);
+                           animated in master exports, PNGs and the preview */
+    AN_GRAIN_STATIC,    /* one fixed paper texture, the same every frame */
+    AN_GRAIN_ANIMATED,  /* re-rolled at 12 Hz (or every frame: grain_every_frame) */
+} an_grain_mode;
+
 typedef enum an_background {
     AN_BG_PAPER = 0, /* paper color, grain and vignette (default) */
     AN_BG_FLAT,      /* paper color only */
@@ -93,7 +101,8 @@ typedef struct an_style {
     bool boil_off;
     float grain;               /* paper grain strength; default 0.06 */
     bool grain_off;
-    bool grain_every_frame;    /* default: grain steps at 12 Hz */
+    bool grain_every_frame;    /* animated grain: every frame instead of 12 Hz */
+    an_grain_mode grain_mode;
     float vignette;            /* default 0.25 */
     bool vignette_off;
     an_background background;

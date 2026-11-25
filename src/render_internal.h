@@ -80,6 +80,7 @@ typedef struct ani_renderer {
     bool paper;              // draw the background with the paper shader
     float paper_color[4], grain, vignette; // grain and vignette already x scene chaos
     uint32_t seed_lo, seed_hi, grain_step;
+    bool grain_auto_static;  // AN_GRAIN_AUTO means static (set by share exports)
     // capacity reserved for this scene (estimate, once per scene)
     const an_scene *reserved_for;
     uint32_t reserved_count;

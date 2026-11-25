@@ -560,6 +560,38 @@ static void test_chaos_tree(void) {
     an_scene_destroy(s);
 }
 
+// Grain modes. At 30 fps, frame 30 is grain step (30 x 12) / 30 = 12 when
+// animated; static grain uses step 0 on every frame. So static frame 30 must
+// equal animated frame 0 byte for byte, and animated frame 30 must differ.
+// AN_GRAIN_AUTO follows the renderer: static when set up by a share export.
+static void test_grain_modes(void) {
+    const size_t bytes = (size_t)W * H * 4;
+    unsigned char *anim0 = malloc(bytes);
+    an_scene *s = an_scene_create(&(an_scene_desc){ .width = W, .height = H, .fps = 30, .seed = 5,
+                                                    .style = { .grain_mode = AN_GRAIN_ANIMATED } });
+    an_wait(s, 1.5f);
+    render(s, 0);
+    memcpy(anim0, g_px, bytes);
+    render(s, 30);
+    CHECK(memcmp(anim0, g_px, bytes) != 0);
+    an_scene_destroy(s);
+    for (int auto_mode = 0; auto_mode < 2; auto_mode++) {
+        s = an_scene_create(&(an_scene_desc){ .width = W, .height = H, .fps = 30, .seed = 5,
+                                              .style = { .grain_mode = auto_mode ? AN_GRAIN_AUTO : AN_GRAIN_STATIC } });
+        an_wait(s, 1.5f);
+        g_r.grain_auto_static = auto_mode == 1;
+        render(s, 30);
+        CHECK(memcmp(anim0, g_px, bytes) == 0);
+        render(s, 45);
+        CHECK(memcmp(anim0, g_px, bytes) == 0);
+        g_r.grain_auto_static = false;
+        render(s, 30); // AUTO without a share export: animated again
+        if (auto_mode) CHECK(memcmp(anim0, g_px, bytes) != 0);
+        an_scene_destroy(s);
+    }
+    free(anim0);
+}
+
 int main(void) {
     if (!ani_gfx_setup_headless()) {
         fprintf(stderr, "test_style: headless Metal setup failed\n");
@@ -581,6 +613,7 @@ int main(void) {
     test_paper_under();
     test_chaos_tree();
     test_grain();
+    test_grain_modes();
     test_vignette();
     test_palettes();
 

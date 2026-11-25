@@ -692,3 +692,40 @@ order is fixed; test_memo's comparison extends to "1 thread vs N threads". On
 the M4's 4 performance + 6 efficiency cores, a full-miss frame's ~8 ms of
 tessellation would be expected around 2 ms, which would bring the p99 under
 12 ms (an estimate to be measured, not a result).
+
+## Grain modes (2026-11-25)
+
+`an_style.grain_mode`: `AN_GRAIN_STATIC` (one fixed paper texture: grain step 0
+on every frame), `AN_GRAIN_ANIMATED` (re-rolled at 12 Hz, or every frame with
+`grain_every_frame`), and `AN_GRAIN_AUTO` (the zero value): static in
+`AN_EXPORT_SHARE` exports, animated in master exports, PNGs and the preview.
+Test (`test_grain_modes` in test_style): static frame 30 equals animated frame 0
+byte for byte (step 0), animated frame 30 differs, and AUTO follows the export.
+The 60 reference PNGs are unchanged (PNGs keep animated grain).
+
+Sweep with static grain (`out/bitrate/static.tsv`; default amplitude 0.06; same
+clips, method and measures as the bitrate report; crops `out/bitrate/crops/*_g0.06s.png`):
+
+| clip | grain | CRF | 4:2:0 Mbps | 4:4:4 Mbps | SSIM 420 | grain retained | grain corr |
+|---|---|---|---|---|---|---|---|
+| 08_text | static | 18 | 4.98 | 4.90 | 0.970 | 1.00 | 0.96 |
+| 08_text | static | 21 | 3.67 | 3.63 | 0.959 | 1.01 | 0.93 |
+| 08_text | animated | 18 | 26.15 | 26.04 | 0.935 | 0.97 | 0.80 |
+| 08_text | animated | 21 | 12.87 | 12.79 | 0.871 | 0.73 | 0.46 |
+| 06_look | static | 18 | 7.91 | 7.97 | 0.948 | 0.70 | 0.62 |
+| 06_look | static | 21 | 5.37 | 5.36 | 0.927 | 0.54 | 0.44 |
+| 06_look | animated | 18 | 22.05 | 21.83 | 0.927 | 0.68 | 0.49 |
+| 06_look | animated | 21 | 9.29 | 9.15 | 0.880 | 0.37 | 0.19 |
+
+- Static grain is 3–5x cheaper at the same CRF and keeps more of the grain: the
+  encoder codes it once and predicts it afterwards. SSIM is higher too (bits go
+  to edges instead of noise); text and riso edges in the crops are clean at
+  both CRFs.
+- 06_look costs more than 08_text because its chaos ramps over the clip: the
+  grain's amplitude scales with chaos, so the "static" texture still changes
+  until the ramp ends.
+- Recommended (set): share exports use static grain (AUTO) at **CRF 18**: about
+  5 Mbps for text frames, 8 for a scene whose chaos is moving, with the grain
+  intact. CRF 21 saves another ~30% and still keeps the grain on text (corr
+  0.93) but loses about a third of it during a chaos ramp. Master exports keep
+  animated grain at CRF 12.
