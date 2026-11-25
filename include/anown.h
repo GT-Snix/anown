@@ -49,6 +49,11 @@ typedef struct an_vec2 {
     float x, y;
 } an_vec2;
 
+/* An axis-aligned box in scene pixels (the world, without the camera). */
+typedef struct an_bounds {
+    an_vec2 min, max;
+} an_bounds;
+
 /* ---- scene -------------------------------------------------------------- */
 
 typedef struct an_scene an_scene;
@@ -609,6 +614,11 @@ an_anim an_array_unhighlight(an_obj *arr, int slot, const an_anim_opts *opts);
 an_anim an_array_set_state(an_obj *arr, int slot, an_cell_state state, const an_anim_opts *opts);
 /* Script time: the state of the element in `slot` at the cursor. */
 an_cell_state an_array_state_at_cursor(const an_obj *arr, int slot);
+/* Script time: a slot's cell (or bar) box at the cursor, scene pixels. */
+an_bounds an_array_slot_bounds(const an_obj *arr, int slot);
+/* Script time: how far above the row's top edge (scene pixels, before any frame
+ * clamp) an_array_swap(arr, i, j) would lift its higher element's top edge. */
+float an_array_swap_clearance(const an_obj *arr, int i, int j);
 
 /* The current-line marker (docs/explainer.md): a bar behind the line box and an
  * arrow left of the block, created hidden. an_code_goto shows it at a line the
@@ -725,6 +735,12 @@ an_obj_state an_obj_get(const an_obj *o);
 /* The same at the cursor (script time): what the tracks recorded so far give at
  * the cursor's time. Pure: depends only on what's been recorded. */
 an_obj_state an_obj_at_cursor(const an_obj *o);
+
+/* Script time: the box around the object's geometry and all its descendants at
+ * the cursor (transforms and stroke widths from the tracks recorded so far; ink
+ * width included; riso, shadow and boil offsets not). Objects at opacity 0 are
+ * included: layout should leave room for what appears later. Empty: min > max. */
+an_bounds an_obj_bounds_at_cursor(const an_obj *o);
 
 /* ---- output ------------------------------------------------------------- */
 

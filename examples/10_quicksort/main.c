@@ -134,6 +134,17 @@ int main(int argc, char **argv) {
     pi_ptr = an_array_pointer(arr, 0, &(an_pointer_opts){ .label = "i", .hidden = true });
     pj_ptr = an_array_pointer(arr, 0, &(an_pointer_opts){ .label = "j", .hidden = true });
 
+    // layout check: the longest swap's arc must clear the code panel, and the
+    // pointers must fit in the frame
+    {
+        const an_bounds panel = an_obj_bounds_at_cursor(code), row = an_array_slot_bounds(arr, 0);
+        const an_bounds ptr = an_obj_bounds_at_cursor(pi_ptr);
+        const float peak = row.min.y - an_array_swap_clearance(arr, 0, N - 1);
+        printf("layout: longest swap peaks at y %.0f, code panel ends at %.0f; pointers end at %.0f of 1080\n", peak,
+               panel.max.y, ptr.max.y);
+        if (peak < panel.max.y || ptr.max.y > 1080.0f) fprintf(stderr, "layout: something overlaps\n");
+    }
+
     // intro
     an_wait(S, 0.3f);
     for (int k = 0; k < an_text_length(title); k++) {

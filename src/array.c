@@ -121,22 +121,14 @@ an_anim an_array_unhighlight(an_obj *a, int slot, const an_anim_opts *opts) {
     return an_fill_to(an_array_cell(a, slot), valid(a, slot) ? a->u.array.fill : AN_BLACK, opts);
 }
 
-an_anim an_array_swap(an_obj *a, int i, int j, const an_anim_opts *opts) {
-    an_anim x = { .obj = a, .verb = AN_VERB_SWAP, .swap_i = i, .swap_j = j };
-    if (opts) x.opts = *opts;
-    return x;
-}
-
-// The swap (docs/explainer.md, "Swap: one arc over, one slide under").
-int64_t ani_array_record_swap(an_scene *s, const an_anim *x, int64_t start) {
-    an_obj *a = x->obj;
-    const int i = x->swap_i, j = x->swap_j;
-    if (!valid(a, i) || !valid(a, j) || i == j) return start;
-    an_obj *A = an_array_item(a, i), *B = an_array_item(a, j);
-    const int ea = a->u.array.perm[i], eb = a->u.array.perm[j];
+// The swap's arc heights (array units): H for the element arcing over (A, from
+// slot i), HB for B (0 for adjacent slots: it slides), the lift (eased progress
+// before anything travels) and h, B's height (docs/explainer.md).
+static void swap_heights(const an_obj *a, int i, int j, float *H_out, float *HB_out, double *lift_out, float *h_out) {
     const float xi = a->u.array.slot_x[i], xj = a->u.array.slot_x[j];
     const float d = fabsf(xj - xi);
     const bool bars = a->u.array.style == AN_ARRAY_BARS;
+    const int eb = a->u.array.perm[j];
     // how high an element has to rise to clear a neighbor: a cell, or the tallest
     // bar (plus its label) it passes over
     const float label = bars ? a->u.array.cell.x * 0.8f : 0.0f;
@@ -174,6 +166,32 @@ int64_t ani_array_record_swap(an_scene *s, const an_anim *x, int64_t start) {
         const double u1 = lift + lo_k * (1.0 - 2.0 * lift);
         H = HB + (float)((double)h / (4.0 * u1 * (1.0 - u1))) * 1.05f;
     }
+    *H_out = H;
+    *HB_out = HB;
+    *lift_out = lift;
+    *h_out = h;
+}
+
+an_anim an_array_swap(an_obj *a, int i, int j, const an_anim_opts *opts) {
+    an_anim x = { .obj = a, .verb = AN_VERB_SWAP, .swap_i = i, .swap_j = j };
+    if (opts) x.opts = *opts;
+    return x;
+}
+
+// The swap (docs/explainer.md, "Swap: arcs above the row").
+int64_t ani_array_record_swap(an_scene *s, const an_anim *x, int64_t start) {
+    an_obj *a = x->obj;
+    const int i = x->swap_i, j = x->swap_j;
+    if (!valid(a, i) || !valid(a, j) || i == j) return start;
+    an_obj *A = an_array_item(a, i), *B = an_array_item(a, j);
+    const int ea = a->u.array.perm[i], eb = a->u.array.perm[j];
+    const float xi = a->u.array.slot_x[i], xj = a->u.array.slot_x[j];
+    const bool bars = a->u.array.style == AN_ARRAY_BARS;
+    float HB, H;
+    double lift;
+    float h;
+    swap_heights(a, i, j, &H, &HB, &lift, &h);
+    const bool adjacent = abs(i - j) == 1;
     const float hmin = H;
 
     // clamp to the frame: the row's top on screen at the cursor (base + tracks, camera)
@@ -255,4 +273,31 @@ an_cell_state an_array_state_at_cursor(const an_obj *a, int slot) {
     an_obj *cell = an_array_cell(a, slot);
     const ani_value v = ani_sample(ani_obj_prop(cell, AN_PROP_CELL_STATE), ani_tick_time(a->scene->cursor));
     return (an_cell_state)(int)v.v[0];
+}
+
+// ---- script-time bounds --------------------------------------------------------------------
+
+an_bounds an_array_slot_bounds(const an_obj *a, int slot) {
+    if (!valid(a, slot)) return (an_bounds){ { 1, 1 }, { 0, 0 } };
+    const ani_affine w = ani_obj_world_at((an_obj *)a, ani_tick_time(a->scene->cursor));
+    const bool bars = a->u.array.style == AN_ARRAY_BARS;
+    const float x = a->u.array.slot_x[slot], hw = a->u.array.cell.x * 0.5f;
+    const float y0 = bars ? -a->u.array.cell.y : -a->u.array.cell.y * 0.5f, y1 = bars ? 0.0f : a->u.array.cell.y * 0.5f;
+    an_bounds b = { { INFINITY, INFINITY }, { -INFINITY, -INFINITY } };
+    const an_vec2 c[4] = { { x - hw, y0 }, { x + hw, y0 }, { x + hw, y1 }, { x - hw, y1 } };
+    for (int k = 0; k < 4; k++) {
+        const an_vec2 p = ani_affine_apply(w, c[k]);
+        b.min.x = fminf(b.min.x, p.x); b.min.y = fminf(b.min.y, p.y);
+        b.max.x = fmaxf(b.max.x, p.x); b.max.y = fmaxf(b.max.y, p.y);
+    }
+    return b;
+}
+
+float an_array_swap_clearance(const an_obj *a, int i, int j) {
+    if (!valid(a, i) || !valid(a, j) || i == j) return 0.0f;
+    float H, HB, h;
+    double lift;
+    swap_heights(a, i, j, &H, &HB, &lift, &h);
+    const ani_affine w = ani_obj_world_at((an_obj *)a, ani_tick_time(a->scene->cursor));
+    return H * sqrtf(fabsf(w.a * w.d - w.b * w.c)); // the row's top moves up by H (the arc's peak)
 }

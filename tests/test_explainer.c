@@ -478,6 +478,30 @@ static void test_code_anchors(void) {
     an_scene_destroy(s);
 }
 
+// Bounds at the cursor (hand-computed): a 100 x 60 rect at (300, 200) with a 4 px
+// outline: x 250..350, y 170..230, plus half the ink (2): (248, 168)..(352, 232);
+// after a move to (400, 200) is played: 100 px to the right. array5 at (960, 900):
+// slot 1 (x -96) is (816, 852)..(912, 948). Swap clearance: the arc heights from
+// test_swap (249.02 for 1 <-> 3, 144 for 0 <-> 1); half that for an array scaled 0.5.
+static void test_bounds(void) {
+    an_scene *s = scene();
+    an_obj *r = an_rect(s, &(an_rect_opts){ .pos = { 300, 200 }, .size = { 100, 60 }, .stroke_width = 4 });
+    an_bounds b = an_obj_bounds_at_cursor(r);
+    CHECK(b.min.x == 248.0f && b.min.y == 168.0f && b.max.x == 352.0f && b.max.y == 232.0f);
+    an_play(s, an_move_to(r, (an_vec2){ 400, 200 }, NULL));
+    b = an_obj_bounds_at_cursor(r);
+    CHECK(b.min.x == 348.0f && b.max.x == 452.0f && b.min.y == 168.0f);
+    an_obj *a = array5(s, (an_vec2){ 960, 900 }, NULL);
+    b = an_array_slot_bounds(a, 1);
+    CHECK(b.min.x == 816.0f && b.min.y == 852.0f && b.max.x == 912.0f && b.max.y == 948.0f);
+    CHECK_NEAR(an_array_swap_clearance(a, 1, 3), 249.02, 0.01);
+    CHECK_NEAR(an_array_swap_clearance(a, 0, 1), 144.0, 1e-4);
+    an_obj *half = array5(s, (an_vec2){ 960, 500 }, NULL);
+    an_obj_set_scale(half, (an_vec2){ 0.5f, 0.5f });
+    CHECK_NEAR(an_array_swap_clearance(half, 1, 3), 124.51, 0.01);
+    an_scene_destroy(s);
+}
+
 int main(void) {
     if (!ani_gfx_setup_headless()) {
         fprintf(stderr, "test_explainer: headless Metal setup failed\n");
@@ -500,6 +524,7 @@ int main(void) {
     test_cursor_and_states();
     test_containers();
     test_code_anchors();
+    test_bounds();
 
     free(g_px);
     ani_renderer_shutdown(&g_r);

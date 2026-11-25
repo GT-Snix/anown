@@ -478,3 +478,19 @@ spaces before it aren't displayed, so the panel looks the same.
 unknown), and `an_code_goto_anchor(code, name, opts)` goes there. Numeric
 lines still work. The quicksort script names its six lines (`pivot`, `loop`,
 `compare`, `swap`, `place`, `return`) and no longer has line numbers in it.
+
+### Bounds (friction 11)
+
+Script-time boxes, from the tracks recorded so far, at the cursor (scene
+pixels, the world without the camera):
+- `an_obj_bounds_at_cursor(o)`: the object's geometry and all its descendants,
+  ink width included, riso, shadow and boil not. Objects at opacity 0 count:
+  layout should leave room for what appears later.
+- `an_array_slot_bounds(arr, slot)`: a slot's cell or bar box.
+- `an_array_swap_clearance(arr, i, j)`: how far above the row's top edge that
+  swap lifts its higher element (before any frame clamp). It's computed by the
+  same function the swap uses.
+
+The quicksort script checks its own layout with them: the longest swap peaks at
+y 516 and the code panel ends at 498 (an 18 px margin, now measured rather than
+read off the docs); the pointers end at 986 of 1080.

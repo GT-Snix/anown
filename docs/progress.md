@@ -940,3 +940,10 @@ options).
 `//@name` anchors in code text (stripped from the display), `an_code_anchor`,
 `an_code_goto_anchor`. The quicksort script uses names instead of numbers;
 frames identical to the golden set. Test: `test_code_anchors`.
+
+## API fixes, 8: bounds queries (2026-11-25)
+
+`an_obj_bounds_at_cursor`, `an_array_slot_bounds`, `an_array_swap_clearance`
+(one function computes the swap heights for both the swap and the query). The
+quicksort script checks its layout with them (18 px between the longest swap's
+peak and the code panel). Frames identical to the golden set. Test: `test_bounds`.
