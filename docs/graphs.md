@@ -34,6 +34,19 @@ an_obj *an_edge(an_scene *s, const an_edge_opts *opts);
 - **Draw-on:** `an_draw(edge)` is by arc length along the resolved path; the
   arrowhead pops in at 1 (like polygons).
 
+**Verbs and the camera** (docs/api-fixes.md, item 9):
+- **Verbs:** endpoints come from each node's world transform at the frame,
+  which includes its verb transform (scale and rotation about the pivot; verbs
+  don't translate).
+  - A popping or slapped node's outline grows and shrinks, and its edge ends
+    follow it. `gap` doesn't scale.
+  - Tested: the end is at 300 − (30 sx + 6) for every frame of a pop and of a
+    slap, with sx read from the track.
+- **Camera:** endpoints are resolved in scene space. The camera (pan, zoom,
+  rotation, shake) applies to the finished geometry, so nodes and edges move
+  together. Tested: a 100 px pan matches the unpanned frame shifted by 100 px,
+  pixel for pixel.
+
 **No cycles, rejected at script time.**
 - An edge's endpoints must not depend on the edge. `an_edge` returns NULL (with
   a message) if `from` or `to` is an edge, is the edge itself, or is a

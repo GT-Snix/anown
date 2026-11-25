@@ -144,6 +144,71 @@ static void test_edge_cache(void) {
     an_scene_destroy(s);
 }
 
+// Edges follow verbs: a horizontal edge a (100, 100) -> b (300, 100), circles r 30,
+// gap 6. Mid-pop (and mid-slap) on b, its verb scale is (sx, sy), read from the track;
+// the edge runs along x, so its end is at 300 - (30 sx + 6) by hand, and the start
+// stays at 136. At the verb's end (sx = 1) the end is back at 264.
+static void verb_case(an_anim verb, const char *what) {
+    an_scene *s = scene();
+    an_obj *g = an_graph(s, NULL);
+    an_obj *a = an_graph_node(g, &(an_node_opts){ .pos = { 100, 100 }, .radius = 30 });
+    an_obj *b = an_graph_node(g, &(an_node_opts){ .pos = { 300, 100 }, .radius = 30 });
+    an_obj *e = an_graph_edge(g, a, b, NULL);
+    verb.obj = b;
+    const an_handle h = an_play(s, verb);
+    int tested = 0;
+    for (int64_t f = 1; f < ani_ticks((float)h.end) / (1000000 / 60); f++) {
+        const ani_value vs = ani_sample(ani_obj_prop(b, AN_PROP_VERB_SCALE), ani_frame_time(s, f));
+        if (vs.v[0] == 1.0) continue;
+        an_vec2 p0, p1;
+        resolve(e, s, f, &p0, &p1);
+        CHECK_NEAR(p1.x, 300.0 - (30.0 * vs.v[0] + 6.0), 1e-3);
+        CHECK_NEAR(p1.y, 100.0, 1e-3);
+        CHECK_NEAR(p0.x, 136.0, 1e-4);
+        tested++;
+    }
+    if (tested < 5) fprintf(stderr, "  %s: only %d frames with a verb scale\n", what, tested);
+    CHECK(tested >= 5);
+    an_vec2 p0, p1;
+    resolve(e, s, an_scene_length(s), &p0, &p1);
+    CHECK_NEAR(p1.x, 264.0, 1e-4);
+    an_scene_destroy(s);
+}
+
+static void test_edge_verbs(void) {
+    verb_case(an_pop(NULL, NULL), "pop");
+    verb_case(an_slap(NULL, NULL), "slap");
+}
+
+// The camera is applied after edges are resolved: a pan of 100 px (camera x 640 ->
+// 540, pure translation, effects off) moves the edge and nodes together; the panned
+// frame at x equals the unpanned frame at x - 100, pixel for pixel, over the region
+// holding both nodes and the edge.
+static void test_edge_camera_pan(void) {
+    an_scene *s = scene();
+    an_obj *g = an_graph(s, NULL);
+    an_obj *a = an_graph_node(g, &(an_node_opts){ .pos = { 300, 300 }, .radius = 30, .label = "a" });
+    an_obj *b = an_graph_node(g, &(an_node_opts){ .pos = { 600, 400 }, .radius = 30, .label = "b" });
+    an_graph_edge(g, a, b, &(an_edge_opts){ .directed = true, .bend = 0.3f });
+    an_wait(s, 0.1f);
+    an_play(s, an_camera_move_to(s, (an_vec2){ 540, 360 }, &(an_anim_opts){ .duration = 0.2f }));
+    const size_t bytes = (size_t)W * H * 4;
+    unsigned char *before = malloc(bytes);
+    render(s, 0);
+    memcpy(before, g_px, bytes);
+    render(s, an_scene_length(s));
+    int differ = 0, inked = 0;
+    for (int y = 200; y < 500; y++)
+        for (int x = 350; x < 800; x++) {
+            const unsigned char *p = g_px + ((size_t)y * W + (size_t)x) * 4, *q = before + ((size_t)y * W + (size_t)(x - 100)) * 4;
+            differ += memcmp(p, q, 3) != 0;
+            inked += q[0] < 100;
+        }
+    CHECK(differ == 0 && inked > 500);
+    free(before);
+    an_scene_destroy(s);
+}
+
 // ---- nodes and states ----------------------------------------------------------------------------
 
 // States in a graph whose ACTIVE color is #FFD400: a path a -> b -> c (edges a-b and
@@ -354,6 +419,8 @@ int main(void) {
     test_edge_resolve();
     test_edge_pixels();
     test_edge_cache();
+    test_edge_verbs();
+    test_edge_camera_pan();
     test_states();
     test_graph_ownership();
     test_layout_tree();
