@@ -545,3 +545,38 @@ set from `ad288d0`:
 
 The quicksort script now has no hand-typed durations, no opacity flips, no
 bookkeeping arrays, no code line numbers, and checks its own layout.
+
+### Keys: randomness from the tree, not a counter (2026-11-25)
+
+An unnamed object's random stream (its boil, its `an_obj_rng`) used to be keyed
+by its creation id, a global counter. Adding one object anywhere then changed
+the look of every object made after it: the polygon heads above moved the
+"sorted!" callout's boil. Now:
+- **Unnamed objects** are keyed by their place in the tree: a hash of the
+  parent's key and the child's index (the parent's running count of children
+  created).
+- **Named objects** keep their name's hash.
+- **Library helpers** key their internal parts by fixed names under their
+  parent (`ani_obj_part`): callout `label`, `arrow`, `head`; array `elem` k,
+  `cell`, `value`, `index` k; code panel `box`, `bar` i, `number` i, `line` i,
+  `marker`, `triangle`. A helper adding or removing a part never shifts
+  another's stream.
+- Reparenting keeps an object's key; the key is fixed at creation.
+
+Test: `test_subtree_keys` (tests/test_script.c) adds a child inside one callout
+and checks every pixel outside that callout (with a 40 px margin) over three
+frames. With the old counter keys, the same test fails.
+
+**An intended look change.** Every unnamed boiling object wobbles differently:
+- 271 of 273 quicksort frames changed (frames 0 and 10 have nothing boiling
+  yet), and 33 of the 60 reference PNGs;
+- the boil golden test was re-recorded, with the old values kept in its
+  comment.
+- Golden files kept side by side: `out/golden/quicksort_ad288d0.sha256` (the
+  original), `quicksort_polygon.sha256` (after polygons),
+  `quicksort_treekeys.sha256` (now). The reference frames before and after are
+  in `out/ref/base` and `out/ref/treekeys`.
+
+Also measured: a 200-child group fade records **1 track** (on the group); so do
+`an_fill_to` and `an_draw` on it, since children follow their container. The
+children get no tracks.

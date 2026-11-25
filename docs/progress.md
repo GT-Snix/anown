@@ -958,3 +958,16 @@ golden set, every changed pixel inside the marker, the pointer band, or the
 the new head objects). 0 changed pixels elsewhere (docs/explainer.md,
 "Polygons"). New reference: `out/golden/quicksort_polygon.sha256`. Test:
 `test_polygon` (concave notch, pentagram center by non-zero, fill timing).
+
+## Keys from the tree; dump threads; cursor query test (2026-11-25)
+
+Unnamed objects' random streams come from their tree position (parent key +
+child index); helpers key their parts by fixed names (docs/explainer.md, "Keys").
+An intended look change: boil goldens re-recorded (old values in the test's
+comment), quicksort hashes re-recorded once (271 of 273 frames;
+`out/golden/quicksort_treekeys.sha256`, the earlier files kept), 33 of 60
+reference PNGs changed. New tests (tests/test_script.c): adding a child inside one
+callout changes no pixel outside it (fails with the old keys); frame dumps with
+1 and 8 encoder threads byte-identical (`an_frames_desc.threads`);
+`an_obj_at_cursor` mid-way through an async fade (0.9375 by hand) and unaffected
+by tracks recorded after the call. A 200-child group fade is 1 track.

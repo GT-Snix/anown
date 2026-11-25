@@ -35,6 +35,27 @@ an_rng an_rng_make(uint64_t seed, uint64_t key) {
     return ani_pcg32_seed(initstate, initseq);
 }
 
+static uint64_t mix64(uint64_t z) { // splitmix64's finalizer
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+    return z ^ (z >> 31);
+}
+
+uint64_t ani_rng_child_key(uint64_t parent, uint64_t index) {
+    // top bit clear (name keys have it set); never 0 (the scene's own stream)
+    const uint64_t k = mix64(parent * 0x9E3779B97F4A7C15ull + index + 1) & ~(1ull << 63);
+    return k ? k : 1;
+}
+
+uint64_t ani_rng_part_key(uint64_t parent, const char *part, uint64_t index) {
+    uint64_t h = 0xCBF29CE484222325ull; // FNV-1a of the part name
+    for (const unsigned char *p = (const unsigned char *)part; *p; p++) {
+        h ^= *p;
+        h *= 0x100000001B3ull;
+    }
+    return ani_rng_child_key(parent ^ mix64(h), index);
+}
+
 uint64_t ani_rng_name_key(const char *name) {
     // FNV-1a 64; the top bit is set so a name key can't equal a small creation id
     uint64_t h = 0xCBF29CE484222325ull;

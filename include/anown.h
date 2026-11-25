@@ -413,7 +413,9 @@ typedef struct an_rng {
 /* The scene's own stream. */
 an_rng *an_scene_rng(an_scene *s);
 /* The object's stream: keyed by a hash of its name if it has one, else by its
- * creation id. Drawing from one object's stream never affects another's. */
+ * place in the tree (its parent's key and its index among the children created
+ * under that parent), so adding an object elsewhere never changes it. Drawing
+ * from one object's stream never affects another's. */
 an_rng *an_obj_rng(an_obj *o);
 
 /* A stream from (seed, key). Same inputs, same sequence. */
@@ -799,6 +801,7 @@ typedef struct an_frames_desc {
     int every;           /* default 1 */
     int64_t first;       /* default 0 */
     int64_t last;        /* 0: an_scene_length(s) */
+    int threads;         /* PNG encoders working at once; 0: 8 (the output doesn't depend on it) */
 } an_frames_desc;
 int64_t an_scene_save_frames(an_scene *s, const an_frames_desc *desc);
 

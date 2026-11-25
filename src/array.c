@@ -59,6 +59,7 @@ an_obj *an_array(an_scene *s, const an_array_opts *opts) {
         a->u.array.perm[k] = k;
         an_obj *e = an_group(s, &(an_group_opts){ .parent = a, .pos = { x, 0 } });
         if (!e) return NULL;
+        ani_obj_part(e, "elem", k);
         float h = cell.y;
         an_vec2 rc = { 0, 0 };
         if (bars) {
@@ -73,6 +74,7 @@ an_obj *an_array(an_scene *s, const an_array_opts *opts) {
             .stroke = o.stroke.a > 0.0f ? o.stroke : pal->ink, .stroke_width = o.stroke_width > 0.0f ? o.stroke_width : 5.0f,
             .pattern = o.pattern, .riso = o.riso, .shadow = o.shadow, .paper_under = pu, .brush = o.brush });
         if (!r) return NULL;
+        ani_obj_part(r, "cell", 0);
         a->u.array.elems[k] = e;
         a->u.array.cells[k] = r;
         if (!o.no_values) {
@@ -83,6 +85,7 @@ an_obj *an_array(an_scene *s, const an_array_opts *opts) {
                 .anchor = bars ? AN_ANCHOR_BOTTOM : AN_ANCHOR_MIDDLE,
                 .pos = { 0, bars ? -h - value_size * 0.25f : 0 }, .fill = pal->ink });
             if (!t) return NULL;
+            ani_obj_part(t, "value", 0);
         }
         if (o.index_labels) {
             char lab[24];
@@ -92,6 +95,7 @@ an_obj *an_array(an_scene *s, const an_array_opts *opts) {
                 .parent = a, .text = lab, .font = font, .size = index_size, .align = AN_ALIGN_CENTER,
                 .anchor = AN_ANCHOR_TOP, .pos = { x, y }, .fill = mix(pal->ink, s->background, 0.45f) });
             if (!t) return NULL;
+            ani_obj_part(t, "index", k);
         }
     }
     return a;

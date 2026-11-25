@@ -186,7 +186,8 @@ int64_t an_scene_save_frames(an_scene *s, const an_frames_desc *desc) {
     const int every = d.every > 0 ? d.every : 1;
     const int64_t first = d.first > 0 ? d.first : 0, last = d.last > 0 ? d.last : an_scene_length(s);
     const char *prefix = d.prefix ? d.prefix : "frame";
-    enum { BATCH = 8 };
+    enum { MAXB = 64 };
+    const int BATCH = d.threads > 0 ? (d.threads < MAXB ? d.threads : MAXB) : 8;
     void *pool = ani_pool_push();
     if (!ani_gfx_setup_headless()) {
         fprintf(stderr, "anown: headless Metal setup failed\n");
@@ -221,7 +222,7 @@ int64_t an_scene_save_frames(an_scene *s, const an_frames_desc *desc) {
             jobs[n].w = s->width;
             jobs[n].h = s->height;
         }
-        pthread_t th[BATCH];
+        pthread_t th[MAXB];
         for (int k = 0; k < n; k++) pthread_create(&th[k], NULL, png_worker, &jobs[k]);
         for (int k = 0; k < n; k++) {
             pthread_join(th[k], NULL);

@@ -44,6 +44,7 @@ an_scene *an_scene_create(const an_scene_desc *desc) {
     s->root.scale = (an_vec2){ 1, 1 };
     s->root.opacity = 1.0f;
     s->root.chaos = 1.0f;
+    s->root.rng_key = ANI_RNG_ROOT_KEY;
     return s;
 }
 
@@ -114,7 +115,8 @@ an_obj *ani_obj_make(an_scene *s, an_kind kind, const ani_common_opts *c) {
     o->id = ++s->count;
     o->scene = s;
     o->name = name;
-    o->rng_key = name ? ani_rng_name_key(name) : o->id;
+    o->rng_key = name ? ani_rng_name_key(name) : ani_rng_child_key(p->rng_key, p->children_made);
+    p->children_made++;
     o->rng = an_rng_make(s->seed, o->rng_key);
     o->birth = s->cursor;
     if (name) {
@@ -273,4 +275,10 @@ an_obj *an_polygon(an_scene *s, const an_polygon_opts *opts) {
     if (!path) return NULL;
     // with_path also puts the verb pivot at the center of the points' box
     return with_path(ani_obj_make(s, AN_KIND_POLYGON, ANI_COMMON(&o)), path, ani_outline_requested(o.stroke, o.stroke_width));
+}
+
+void ani_obj_part(an_obj *o, const char *part, int index) {
+    if (!o || o->name || !o->parent) return; // a user's name wins
+    o->rng_key = ani_rng_part_key(o->parent->rng_key, part, (uint64_t)index);
+    o->rng = an_rng_make(o->scene->seed, o->rng_key);
 }

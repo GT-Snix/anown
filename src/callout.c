@@ -42,6 +42,7 @@ an_obj *an_callout(an_scene *s, const an_callout_opts *opts) {
                                                  .align = AN_ALIGN_CENTER, .anchor = AN_ANCHOR_MIDDLE,
                                                  .fill = o.fill.a > 0.0f ? o.fill : pal->ink, .undrawn = o.undrawn });
     if (!label) return NULL;
+    ani_obj_part(label, "label", 0);
     // the target relative to the label's center (the group's origin)
     const an_vec2 t = { o.target.x - o.pos.x, o.target.y - o.pos.y };
     const float tl = sqrtf(t.x * t.x + t.y * t.y);
@@ -79,6 +80,8 @@ an_obj *an_callout(an_scene *s, const an_callout_opts *opts) {
             .parent = g, .undrawn = o.undrawn, .fill = ac, .shadow = o.shadow,
             .points = (an_vec2[]){ e, { hb.x - uy * hwid, hb.y + ux * hwid }, { hb.x + uy * hwid, hb.y - ux * hwid } }, .count = 3 });
         if (!arrow || !head) return NULL;
+        ani_obj_part(arrow, "arrow", 0);
+        ani_obj_part(head, "head", 0);
         g->u.callout.arrow = arrow;
         g->u.callout.head = head;
     }

@@ -55,6 +55,7 @@ struct an_obj {
     // tree: doubly linked sibling list under parent
     an_obj *parent; // never NULL except for the scene root
     an_obj *first_child, *last_child;
+    uint32_t children_made; // children created under it so far (their keys' index)
     an_obj *prev_sibling, *next_sibling;
 
     union {
@@ -164,6 +165,9 @@ typedef struct ani_common_opts {
 // A new object of `kind` at the cursor, with defaults applied to c's fields.
 // NULL on allocation failure, a bad parent, or a duplicate name.
 an_obj *ani_obj_make(an_scene *s, an_kind kind, const ani_common_opts *c);
+// Key a library helper's internal part by a fixed name (and index) under its
+// parent, instead of its child index (docs/explainer.md, "Keys").
+void ani_obj_part(an_obj *o, const char *part, int index);
 // Rect, circle and glyph outlines are opt-in: drawn when a stroke color or width is given.
 bool ani_outline_requested(an_color stroke, float width);
 

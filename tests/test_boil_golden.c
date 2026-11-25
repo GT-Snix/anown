@@ -75,11 +75,17 @@ static uint64_t mesh_hash(const ani_mesh *m) {
 static const int FPS[3] = { 24, 30, 60 };
 static const int64_t FRAMES[4] = { 0, 7, 40, 180 };
 
-// recorded 2026-11-24, before the boil performance work
+// Recorded 2026-11-24, before the boil performance work; re-recorded 2026-11-25
+// for an intended change: unnamed objects' boil keys now come from their place in
+// the tree, not a global creation counter (the "wave" is named, so only the
+// box, ring, arrow and dots changed). The previous values were
+//   24 fps: 41a4a9e780755266 15995d0add2cd625 e5ae03518c78f1fc e21d1a4ec41c2560
+//   30 fps: 41a4a9e780755266 813fe969273ecb55 9e6868d359db396d 5c7d64decc3b0a54
+//   60 fps: 41a4a9e780755266 9fc4b82bb597159f f27e9ebfcd886ae5 5eabeee737fe5af0
 static const uint64_t GOLDEN[3][4] = {
-    { 0x41a4a9e780755266ull, 0x15995d0add2cd625ull, 0xe5ae03518c78f1fcull, 0xe21d1a4ec41c2560ull }, // 24 fps
-    { 0x41a4a9e780755266ull, 0x813fe969273ecb55ull, 0x9e6868d359db396dull, 0x5c7d64decc3b0a54ull }, // 30 fps
-    { 0x41a4a9e780755266ull, 0x9fc4b82bb597159full, 0xf27e9ebfcd886ae5ull, 0x5eabeee737fe5af0ull }, // 60 fps
+    { 0x7b1059db9b90e498ull, 0xc47b5adac0c601e3ull, 0x4cac7e5969c822e1ull, 0xd2813cfcc840968cull }, // 24 fps
+    { 0x7b1059db9b90e498ull, 0xe1eda6b561fc02daull, 0xd18b8f17d5636184ull, 0x35e2217eaa7a4175ull }, // 30 fps
+    { 0x7b1059db9b90e498ull, 0xa89f6a7f0a1581e0ull, 0x9ef0af1824353195ull, 0xd1b3fb3d8e43cbb6ull }, // 60 fps
 };
 
 int main(int argc, char **argv) {
