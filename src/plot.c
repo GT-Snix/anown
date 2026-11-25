@@ -31,9 +31,9 @@ static an_obj *ink_line(an_scene *s, an_obj *parent, an_vec2 a, an_vec2 b, float
 }
 
 static an_obj *label(an_scene *s, an_obj *parent, const char *text, an_vec2 pos, float size, an_align al,
-                     an_anchor an, an_color ink, bool hidden, const char *part, int index) {
+                     an_anchor an, an_color ink, bool undrawn, const char *part, int index) {
     an_obj *t = an_text(s, &(an_text_opts){ .parent = parent, .text = text, .pos = pos, .size = size, .align = al,
-                                             .anchor = an, .fill = ink, .font = an_font_mono(s), .hidden = hidden });
+                                             .anchor = an, .fill = ink, .font = an_font_mono(s), .undrawn = undrawn });
     if (t) ani_obj_part(t, part, index);
     return t;
 }
@@ -259,7 +259,9 @@ an_obj *an_plot_data(an_obj *ax, const float *xs, const float *ys, int n, const 
             const float bh = fabsf(bot.y - top.y);
             an_obj *r = an_rect(s, &(an_rect_opts){ .parent = g, .pos = { top.x, (top.y + bot.y) * 0.5f },
                                                     .size = { bw, bh > 0 ? bh : 0.001f }, .fill = fill, .stroke = ink,
-                                                    .stroke_width = sw, .pattern = o.pattern, .undrawn = o.undrawn });
+                                                    .stroke_width = sw, .pattern = o.pattern, .undrawn = o.undrawn,
+                                                    .riso = o.riso, .shadow = o.shadow, .brush = o.brush,
+                                                    .paper_under = o.paper_under });
             if (!r) return NULL;
             ani_obj_part(r, "bar", k);
         } else {
@@ -269,7 +271,9 @@ an_obj *an_plot_data(an_obj *ax, const float *xs, const float *ys, int n, const 
             }
             an_obj *pt = an_circle(s, &(an_circle_opts){ .parent = g, .pos = an_axes_point(ax, xs[k], ys[k]),
                                                          .radius = o.size > 0 ? o.size : 6.0f, .fill = fill, .stroke = ink,
-                                                         .stroke_width = sw, .undrawn = o.undrawn });
+                                                         .stroke_width = sw, .undrawn = o.undrawn, .pattern = o.pattern,
+                                                         .riso = o.riso, .shadow = o.shadow, .brush = o.brush,
+                                                         .paper_under = o.paper_under });
             if (!pt) return NULL;
             ani_obj_part(pt, "point", k);
         }

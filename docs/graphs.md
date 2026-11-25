@@ -1,6 +1,6 @@
 # Graphs, trees and plots (9B): design
 
-Status: proposal (2026-11-25). Scope: edges between nodes, deterministic layouts
+Status: implemented (2026-11-25); friction from writing `examples/11_bst` at the end. Scope: edges between nodes, deterministic layouts
 (tidy tree, layered), node shapes with labels, highlight states for nodes, edges
 and paths, axes with a function plot and a data plot. Then `examples/11_bst`.
 
@@ -248,3 +248,60 @@ clipped to the box.
 3. layouts;
 4. axes and plots (clipping);
 5. the example and the friction list.
+
+## Friction from `examples/11_bst` (2026-11-25)
+
+Hit while writing the example as a user would. None are fixed yet, except the
+plot-data bug in item 8.
+
+1. **Edge state colors can't be set.**
+   - `an_node_opts` has `state_colors` but `an_edge_opts` doesn't.
+   - So a node ACTIVE color of my own (yellow) gave a yellow path with pink
+     edges. I dropped the override to make them match.
+2. **No way to find the edge between two nodes.**
+   - `an_highlight_path` wants node, edge, node, ... in order. I kept my own
+     `edge_in[child]` table to look up each edge.
+   - A node knows nothing about its edges, so there's no `an_edge_between(a, b)`
+     and no "path of nodes", where the edges would be filled in.
+3. **Layouts are relative, and applying one is a loop.**
+   - `an_layout_tree` gives positions around the root at (0, 0). I add the
+     root's spot to each by hand.
+   - Gliding to a new layout means building an `an_anim` array of `an_move_to`
+     calls for `an_par`.
+   - An origin parameter, plus something like
+     `an_layout_moves(objs, pos, n, opts)` returning one anim, would remove
+     both steps.
+4. **The layout input is a second copy of my tree.** I keep parent and side
+   per key for the BST anyway, and copy them into `an_tree_node[]` on every
+   insertion. That's acceptable, but noted.
+5. **Text can't change.** The caption ("insert 42") is a new text object on
+   every insertion, with the old one faded out. That's a `say()` helper every
+   explainer ends up writing (quicksort didn't need one only because its code
+   panel carried the text).
+6. **`an_cell_state` for nodes.** `AN_CELL_ACTIVE` on a tree node reads wrong.
+   The states should be renamed (e.g. `an_state`, `AN_STATE_ACTIVE`), with the
+   cell names kept as aliases.
+7. **Axes space and scene space.**
+   - `an_axes_point` returns a point in the axes' own space, but the callout
+     wants scene space. I added the axes' `pos` by hand, which breaks if the
+     axes are scaled or nested.
+   - There's no script-time local-to-scene conversion
+     (`an_obj_to_scene(obj, p)`).
+8. **Small objects get the full riso offset.**
+   - 11 px plot points looked like rings knocked off their dots. I had to turn
+     riso off.
+   - In doing so I found that `an_plot_data` dropped riso, shadow, brush,
+     pattern (points) and paper_under. That's fixed.
+   - The offset probably should scale down for small objects, as size_chaos
+     does for text.
+9. **The shadow under a small mono label doubles it.** The callout label at
+   size 40 is hard to read: the shadow is offset by about 6 px, almost a letter
+   stroke. Callouts may want a smaller shadow or none on the label.
+10. **Fading the tree took planning ahead.** The nodes and edges have to be
+    created under a group from the start to fade them together (rule 13). That
+    works, and edges under a group resolve correctly, but it's easy to miss
+    until the fade.
+
+Not hit, but close:
+- **`an_plot_item` counts only points that were made**, so a skipped point
+  shifts the indices of the rest. All 12 heights were in range here.

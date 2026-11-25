@@ -971,3 +971,35 @@ callout changes no pixel outside it (fails with the old keys); frame dumps with
 1 and 8 encoder threads byte-identical (`an_frames_desc.threads`);
 `an_obj_at_cursor` mid-way through an async fade (0.9375 by hand) and unaffected
 by tracks recorded after the call. A 200-child group fade is 1 track.
+
+## 9B: graphs, trees, plots; examples/11_bst (2026-11-25)
+
+docs/graphs.md is the spec.
+
+**What landed:**
+- **Edges:** endpoints resolved each frame from the nodes' sampled state.
+  - The path is built in the mesh's frame arena, and the resolved geometry is in
+    the cache key; breaking the key on purpose fails `test_edge_cache`.
+  - Cycles are rejected at script time.
+  - Directed edges carry an `an_polygon` head on the tip frame.
+- **Nodes:** circle or rounded rect, with a label; patterned nodes get
+  paper_under.
+- **States:** node and edge states, and `an_highlight_path`.
+- **Layouts:** tidy tree (binary in-order, n-ary) and layered (8 fixed
+  barycenter sweeps).
+- **Plots:**
+  - Axes with ticks and labels; `an_axes_point` is exact for round values.
+  - Function plots are adaptive and clipped to the box as geometry, with no
+    layer or stencil bit.
+  - Data plots draw points or bars.
+- **Tests:** tests/test_graph.c, with every value hand-computed.
+- **Unchanged:** reference frames are identical; the clean build is 3.5 s.
+- **examples/11_bst:** inserts 12 keys (heights 1 2 3 3 3 4 4 4 5 5 5 5), then
+  plots height vs n against log2(n+1). It's 43.7 s; `make example-bst` exports
+  it unattended in 28 s.
+
+**Not done:**
+- No force layout.
+- Draw-on for plots isn't tested separately (it is the ordinary stroke draw).
+- The shadow of a clipped plot isn't clipped.
+- Ten friction points are listed in docs/graphs.md.

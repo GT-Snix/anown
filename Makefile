@@ -41,7 +41,7 @@ EX_BIN   += $(SPIKES:%=$(BUILD)/examples/%)
 TESTS    := $(patsubst tests/%.c,%,$(wildcard tests/test_*.c))
 TEST_BIN := $(TESTS:%=$(BUILD)/tests/%)
 
-.PHONY: all run test deps clean clean-cache example-quicksort
+.PHONY: all run test deps clean clean-cache example-quicksort example-bst
 # Keep generated shader headers; make would otherwise delete them as intermediates.
 .SECONDARY: $(SHADER_H)
 all: $(LIB) $(EX_BIN) $(TEST_BIN)
@@ -116,6 +116,12 @@ example-quicksort: $(BUILD)/examples/10_quicksort
 	@mkdir -p out $(if $(EVERY),out/quicksort_frames)
 	./$(BUILD)/examples/10_quicksort --export out/quicksort.mp4 \
 		$(if $(EVERY),--frames out/quicksort_frames --every $(EVERY))
+
+# The BST explainer, exported unattended: out/bst.mp4; EVERY=N as above (out/bst_frames/).
+example-bst: $(BUILD)/examples/11_bst
+	@mkdir -p out $(if $(EVERY),out/bst_frames)
+	./$(BUILD)/examples/11_bst --export out/bst.mp4 \
+		$(if $(EVERY),--frames out/bst_frames --every $(EVERY))
 
 run: $(BUILD)/examples/$(EX)
 	./$(BUILD)/examples/$(EX)
