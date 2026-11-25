@@ -269,6 +269,32 @@ static void test_graph_ownership(void) {
     an_scene_destroy(s);
 }
 
+// Containers (api-fixes item 7): an array with a pointer, faded to 0.5, is one isolated
+// layer (the array's: cells, values, labels and the pointer inside it); a graph with
+// nodes, edges and an arrowhead, faded to 0.5, is one layer too (the graph's).
+static void test_containers(void) {
+    an_scene *s = scene();
+    static const int v[4] = { 3, 1, 4, 1 };
+    an_obj *arr = an_array(s, &(an_array_opts){ .pos = { 400, 200 }, .values = v, .count = 4, .index_labels = true });
+    an_obj *ptr = an_array_pointer(arr, 1, &(an_pointer_opts){ .label = "i" });
+    CHECK(ptr && ptr->parent == arr);
+    an_obj_set_opacity(arr, 0.5f);
+    render(s, 0);
+    CHECK(g_r.mesh.nlayers == 1 && g_r.mesh.layers[0].obj == arr);
+    an_scene_destroy(s);
+
+    s = scene();
+    an_obj *g = an_graph(s, &(an_graph_opts){ .directed = true, .layout = { .origin = { 600, 150 } } });
+    an_obj *r = an_graph_child(g, NULL, 0, &(an_node_opts){ .label = "r" });
+    an_graph_child(g, r, -1, &(an_node_opts){ .label = "a" });
+    an_graph_child(g, r, 1, &(an_node_opts){ .label = "b" });
+    an_play(s, an_graph_layout_tree(g, NULL, NULL));
+    an_obj_set_opacity(g, 0.5f);
+    render(s, an_scene_length(s));
+    CHECK(g_r.mesh.nlayers == 1 && g_r.mesh.layers[0].obj == g);
+    an_scene_destroy(s);
+}
+
 // ---- layouts -------------------------------------------------------------------------------------
 
 #define POS(v, X, Y) CHECK((v).x == (float)(X) && (v).y == (float)(Y))
@@ -488,6 +514,7 @@ int main(void) {
     test_edge_camera_pan();
     test_states();
     test_graph_ownership();
+    test_containers();
     test_layout_tree();
     test_layout_layered();
     test_layout_origin();
