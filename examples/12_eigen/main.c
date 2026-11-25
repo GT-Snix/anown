@@ -18,7 +18,7 @@
 enum { NCH = 7, FPS = 30, RING = 24 };
 // chapter durations, seconds (retime to the voiceover here)
 static const float DUR[NCH] = { 30, 60, 90, 120, 90, 70, 30 };
-static const bool BUILT[NCH] = { true, true, true, true, true, false, true };
+static const bool BUILT[NCH] = { true, true, true, true, true, true, true };
 
 static const float PI = 3.14159265358979f;
 #define MAGENTA AN_HEX(0xE6007E)
@@ -545,6 +545,106 @@ static void chapter4(void) {
     end_chapter(4);
 }
 
+// ---- chapter 5: why it matters --------------------------------------------------------------
+
+static float deg_of(an_vec2 v) { return atan2f(v.y, v.x) * 180.0f / PI; }
+
+// move unit arrows (radius r) along the circle from a0[i] to a1[i] degrees (the short
+// way), all together, in `keys` linear steps over `dur` seconds
+static void arcs(an_obj *const *objs, const float *a0, const float *a1, int n, float r, float dur, int keys) {
+    const float dt = dur / (float)keys;
+    for (int j = 1; j <= keys; j++) {
+        for (int i = 0; i < n; i++) {
+            float d = a1[i] - a0[i];
+            while (d > 180.0f) d -= 360.0f;
+            while (d <= -180.0f) d += 360.0f;
+            if (d == 0.0f) continue;
+            const float a = (a0[i] + d * (float)j / (float)keys) * PI / 180.0f;
+            an_play_async(S, an_move_to(objs[i], (an_vec2){ r * cosf(a), r * sinf(a) },
+                                        &(an_anim_opts){ .duration = dt, .ease = AN_EASE_LINEAR }));
+        }
+        an_wait(S, dt);
+    }
+}
+
+static an_obj *c5_left[RING + 3];
+
+static void chapter5(void) {
+    an_obj *g = chapter_group(5);
+    an_play_async(S, an_plane_matrix_to(P, IDENTITY, &(an_anim_opts){ .duration = 1.5f }));
+    fade_all(prev_left, prev_n, 0, 1.0f);
+    an_wait(S, 1.0f);
+    an_obj *span[2];
+    for (int k = 0; k < 2; k++) {
+        span[k] = an_plane_line(P, (an_vec2){ 0, 0 }, k ? (an_vec2){ 1, -1 } : (an_vec2){ 1, 0 },
+                                &(an_line_opts){ .name = nm("ch5/span/%d", k), .z = -3, .stroke = k ? CYAN : MAGENTA,
+                                                 .stroke_width = 4, .undrawn = true, .riso = AN_OFF, .shadow = AN_OFF });
+        an_play_async(S, an_draw(span[k], &(an_anim_opts){ .duration = 1.2f }));
+    }
+    an_wait(S, 1.5f);
+
+    // one arrow, A applied again and again, rescaled to unit length after each step
+    const float R = 2.0f; // drawn at length 2 so the angle is easy to see
+    an_vec2 v = { 0, 1 };
+    an_obj *a = arrow("ch5/v", (an_vec2){ 0, R }, ORANGE, 6, false);
+    pop_arrow(a);
+    an_obj *readout = an_text(S, &(an_text_opts){ .parent = g, .text = nm("angle = %5.1f\xC2\xB0", deg_of(v)),
+                                                  .pos = { 1880, 70 }, .size = 52, .font = an_font_mono(S),
+                                                  .align = AN_ALIGN_RIGHT, .anchor = AN_ANCHOR_MIDDLE, .fill = CHARCOAL,
+                                                  .hidden = true, .riso = AN_OFF, .shadow = AN_OFF });
+    an_obj *fit = an_text(S, &(an_text_opts){ .parent = g, .text = "after each step: rescaled to fit", .pos = { 960, 1010 },
+                                              .size = 46, .align = AN_ALIGN_CENTER, .anchor = AN_ANCHOR_MIDDLE,
+                                              .fill = CHARCOAL, .hidden = true, .riso = AN_OFF, .shadow = AN_OFF });
+    an_play_async(S, an_fade_to(readout, 1, &(an_anim_opts){ .duration = 0.4f }));
+    an_play(S, an_fade_to(fit, 1, &(an_anim_opts){ .duration = 0.4f }));
+    an_wait(S, 1.0f);
+    printf("chapter 5: angles %.1f", (double)deg_of(v));
+    for (int k = 1; k <= 6; k++) {
+        const an_vec2 w = mul(A, v);
+        an_obj *aw = arrow(nm("ch5/av/%d", k), (an_vec2){ w.x * R, w.y * R }, pale(ORANGE, 0.5f), 5, true);
+        an_play(S, an_draw(aw, &(an_anim_opts){ .duration = 0.6f }));
+        an_wait(S, 0.5f);
+        const float l = hypotf(w.x, w.y);
+        const an_vec2 nv = { w.x / l, w.y / l };
+        const float a0 = deg_of(v), a1 = deg_of(nv);
+        an_play_async(S, an_fade_to(aw, 0, &(an_anim_opts){ .duration = 0.6f }));
+        an_play_async(S, an_text_set(readout, nm("angle = %5.1f\xC2\xB0", a1), &(an_text_set_opts){ .anim = { .duration = 0.3f } }));
+        arcs((an_obj *[]){ a }, &a0, &a1, 1, R, 1.0f, 12);
+        v = nv;
+        printf(" %.1f", (double)a1);
+        an_wait(S, 0.8f);
+    }
+    printf("\n");
+    an_wait(S, 1.5f);
+    fade_all((an_obj *[]){ a, readout }, 2, 0, 0.6f);
+    an_wait(S, 0.5f);
+
+    // the whole ring, normalized after every step: pulled toward the magenta line
+    make_ring("ch5", CHARCOAL);
+    an_wait(S, 1.0f);
+    float ang[RING], next[RING];
+    for (int k = 0; k < RING; k++) ang[k] = (float)k * 15.0f;
+    for (int step = 1; step <= 6; step++) {
+        int still = 0;
+        for (int k = 0; k < RING; k++) {
+            const an_vec2 u = { cosf(ang[k] * PI / 180.0f), sinf(ang[k] * PI / 180.0f) }, w = mul(A, u);
+            next[k] = deg_of(w);
+            still += stays(A, u);
+        }
+        if (step == 1) printf("chapter 5: %d ring arrows stay put (on the magenta and cyan lines)\n", still);
+        arcs(ring, ang, next, RING, 1.0f, 1.4f, 14);
+        memcpy(ang, next, sizeof ang);
+        an_wait(S, 0.8f);
+    }
+    memcpy(c5_left, ring, sizeof ring);
+    c5_left[RING] = span[0];
+    c5_left[RING + 1] = span[1];
+    c5_left[RING + 2] = fit;
+    prev_left = c5_left;
+    prev_n = RING + 3;
+    end_chapter(5);
+}
+
 // ---- chapter 6: recap ----------------------------------------------------------------------
 
 static an_obj *say_at(an_obj *g, const char *text, an_vec2 at, an_color c, float size, an_align al) {
@@ -608,7 +708,7 @@ int main(int argc, char **argv) {
     if (!S) return 1;
     P = an_plane(S, &(an_plane_opts){ .name = "plane" }); // 1 unit = 100 px at 1080p, origin at the center
 
-    void (*const chapters[NCH])(void) = { chapter0, chapter1, chapter2, chapter3, chapter4, NULL, chapter6 };
+    void (*const chapters[NCH])(void) = { chapter0, chapter1, chapter2, chapter3, chapter4, chapter5, chapter6 };
     for (int c = 0; c < NCH; c++) {
         if (!BUILT[c]) continue;
         ch_start[c] = an_scene_time(S);
