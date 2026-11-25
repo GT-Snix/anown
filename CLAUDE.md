@@ -136,6 +136,10 @@ Out of scope for v1: LaTeX, 3D, audio, a GUI editor, and scripting-language bind
     approval for one push doesn't cover the next. The remote is
     https://github.com/GT-Snix/anown (private).
 
+18. **Design docs gate implementation.** After writing a design doc, stop and
+    wait for approval. Do not implement in the same turn, even when the request
+    says "doc first, then implement": show the doc, then end the turn.
+
 ## Build
 
 - One `Makefile`, no CMake. `make` builds the library, the examples and the tests.
