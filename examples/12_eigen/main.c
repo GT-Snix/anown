@@ -18,7 +18,7 @@
 enum { NCH = 7, FPS = 30, RING = 24 };
 // chapter durations, seconds (retime to the voiceover here)
 static const float DUR[NCH] = { 30, 60, 90, 120, 90, 70, 30 };
-static const bool BUILT[NCH] = { true, true, true, true, false, false, true };
+static const bool BUILT[NCH] = { true, true, true, true, true, false, true };
 
 static const float PI = 3.14159265358979f;
 #define MAGENTA AN_HEX(0xE6007E)
@@ -125,6 +125,26 @@ static an_obj *plane_label(const char *name, const char *text, an_vec2 at, an_co
     return an_text(S, &(an_text_opts){ .name = name, .parent = P, .text = text, .pos = at, .size = size,
                                        .font = an_font_mono(S), .align = AN_ALIGN_CENTER, .anchor = AN_ANCHOR_MIDDLE,
                                        .fill = c, .riso = AN_OFF, .shadow = AN_OFF });
+}
+
+// hold until `t` seconds into the chapter (sub-sections of a chapter)
+static void hold_until(int ch, float t) {
+    const double end = ch_start[ch] + t, now = an_scene_time(S);
+    if (now > end + 1e-9) fprintf(stderr, "chapter %d: section ending at %.0f s runs %.2f s over\n", ch, (double)t, now - end);
+    else an_wait(S, (float)(end - now));
+}
+
+// a callout (riso and shadow off) pointing at a scene point, drawn on
+static an_obj *note(an_obj *g, const char *text, an_vec2 at, an_vec2 target, float bend) {
+    an_obj *c = an_callout(S, &(an_callout_opts){ .parent = g, .text = text, .size = 42, .pos = at, .target = target,
+                                                   .bend = bend, .undrawn = true, .shadow = AN_OFF, .riso = AN_OFF });
+    an_play(S, an_draw(c, &(an_anim_opts){ .duration = 0.9f }));
+    return c;
+}
+
+static an_mat2 rotation(float deg) {
+    const float r = deg * PI / 180.0f;
+    return (an_mat2){ cosf(r), -sinf(r), sinf(r), cosf(r) };
 }
 
 static an_obj *chapter_group(int ch) { return an_group(S, &(an_group_opts){ .name = nm("ch%d", ch) }); }
@@ -440,6 +460,91 @@ static void chapter3(void) {
     end_chapter(3);
 }
 
+// ---- chapter 4: edge cases ---------------------------------------------------------------
+
+static an_obj *c4_left[RING + 4];
+// what the chapter before 6 leaves on screen (set by that chapter)
+static an_obj **prev_left;
+static int prev_n;
+
+static void chapter4(void) {
+    an_obj *g = chapter_group(4);
+    an_obj *fade[18];
+    int nf = 0;
+    for (int k = 0; k < c3_n; k++) fade[nf++] = c3_keep[k];
+    fade[nf++] = c3_lines[0];
+    fade[nf++] = c3_lines[1];
+    an_play_async(S, an_plane_matrix_to(P, IDENTITY, &(an_anim_opts){ .duration = 1.5f }));
+    fade_all(fade, nf, 0, 1.0f);
+    an_wait(S, 1.0f);
+
+    // a) negative: B flips the x-axis arrow but keeps it on its line
+    const an_mat2 B = { -1, 0, 0, 2 };
+    an_obj *x = arrow("ch4/a/x", (an_vec2){ 1.5f, 0 }, CHARCOAL, 6, true), *y = arrow("ch4/a/y", (an_vec2){ 0, 1.5f }, CHARCOAL, 6, true);
+    an_play_async(S, an_draw(x, &(an_anim_opts){ .duration = 0.6f }));
+    an_play(S, an_draw(y, &(an_anim_opts){ .duration = 0.6f }));
+    an_wait(S, 1.5f);
+    an_play(S, an_plane_matrix_to(P, B, &(an_anim_opts){ .duration = 3 }));
+    printf("chapter 4a: B keeps (1, 0) on its line: %s; lambda = %g\n", stays(B, (an_vec2){ 1, 0 }) ? "yes" : "no",
+           (double)mul(B, (an_vec2){ 1, 0 }).x);
+    recolor(x, ORANGE, 0.5f);
+    an_wait(S, 0.6f);
+    const an_vec2 tip = an_plane_point_at_cursor(P, (an_vec2){ 1.5f, 0 });
+    an_obj *ca = note(g, "lambda = -1: still on the line, pointing backwards", (an_vec2){ 640, 330 },
+                      (an_vec2){ tip.x - 10, tip.y - 14 }, -0.3f);
+    hold_until(4, 28.0f);
+    an_play_async(S, an_plane_matrix_to(P, IDENTITY, &(an_anim_opts){ .duration = 1.5f }));
+    fade_all((an_obj *[]){ x, y, ca }, 3, 0, 1.0f);
+    hold_until(4, 30.0f);
+
+    // b) zero: C crushes the plane onto y = x; the direction (1, -1) goes to nothing
+    const an_mat2 C = { 1, 1, 1, 1 };
+    an_obj *u = arrow("ch4/b/u", (an_vec2){ 1, 1 }, CHARCOAL, 6, true), *w = arrow("ch4/b/w", (an_vec2){ 1, -1 }, CHARCOAL, 6, true);
+    an_play_async(S, an_draw(u, &(an_anim_opts){ .duration = 0.6f }));
+    an_play(S, an_draw(w, &(an_anim_opts){ .duration = 0.6f }));
+    an_wait(S, 1.5f);
+    an_play(S, an_plane_matrix_to(P, C, &(an_anim_opts){ .duration = 3 }));
+    const an_vec2 cw = mul(C, (an_vec2){ 1, -1 });
+    printf("chapter 4b: C (1, -1) = (%g, %g); C (1, 1) = 2 (1, 1)\n", (double)cw.x, (double)cw.y);
+    recolor(u, ORANGE, 0.5f);
+    an_wait(S, 0.6f);
+    const an_vec2 o = an_plane_point_at_cursor(P, (an_vec2){ 0, 0 });
+    an_obj *cb = note(g, "lambda = 0: this direction is crushed to nothing", (an_vec2){ 1300, 860 },
+                      (an_vec2){ o.x + 12, o.y + 14 }, 0.3f);
+    hold_until(4, 58.0f);
+    an_play_async(S, an_plane_matrix_to(P, IDENTITY, &(an_anim_opts){ .duration = 1.5f }));
+    fade_all((an_obj *[]){ u, w, cb }, 3, 0, 1.0f);
+    hold_until(4, 60.0f);
+
+    // c) none: a quarter turn, in three keyframes so lengths don't shrink much
+    make_ring("ch4", CHARCOAL);
+    an_wait(S, 0.5f);
+    // three of them in orange, each with the line it starts on (pale, fixed in the scene)
+    static const int marked[3] = { 0, 4, 9 }; // 0, 60 and 135 degrees
+    an_obj *lines[3];
+    for (int k = 0; k < 3; k++) {
+        const float a = (float)marked[k] * 15.0f * PI / 180.0f;
+        const an_vec2 o = scene_at_identity((an_vec2){ 0, 0 }), d = { cosf(a), -sinf(a) };
+        lines[k] = an_line(S, &(an_line_opts){ .parent = g, .from = { o.x - d.x * 1300, o.y - d.y * 1300 },
+                                               .to = { o.x + d.x * 1300, o.y + d.y * 1300 }, .stroke = pale(ORANGE, 0.5f),
+                                               .stroke_width = 2, .hidden = true, .shadow = AN_OFF, .riso = AN_OFF });
+        an_play_async(S, an_fade_to(lines[k], 1, &(an_anim_opts){ .duration = 0.6f }));
+        recolor(ring[marked[k]], ORANGE, 0.5f);
+    }
+    an_wait(S, 1.5f);
+    for (int k = 1; k <= 3; k++)
+        an_play(S, an_plane_matrix_to(P, rotation(30.0f * (float)k), &(an_anim_opts){ .duration = 1.2f, .ease = AN_EASE_LINEAR }));
+    printf("chapter 4c: a quarter turn keeps %d of %d arrows on their line\n", ring_count_staying(rotation(90)), RING);
+    an_wait(S, 0.8f);
+    c4_left[RING] = note(g, "no arrow stays on its line: no real eigenvectors", (an_vec2){ 960, 900 },
+                         an_plane_point_at_cursor(P, (an_vec2){ 0.2f, -1.05f }), 0.25f);
+    memcpy(c4_left, ring, sizeof ring);
+    for (int k = 0; k < 3; k++) c4_left[RING + 1 + k] = lines[k];
+    prev_left = c4_left;
+    prev_n = RING + 4;
+    end_chapter(4);
+}
+
 // ---- chapter 6: recap ----------------------------------------------------------------------
 
 static an_obj *say_at(an_obj *g, const char *text, an_vec2 at, an_color c, float size, an_align al) {
@@ -454,8 +559,16 @@ static void chapter6(void) {
     an_obj *g = chapter_group(6);
     // the hook again, on the two lines that survive
     an_play_async(S, an_plane_matrix_to(P, IDENTITY, &(an_anim_opts){ .duration = 1.5f }));
-    fade_all(c3_keep, c3_n, 0, 1.0f);
+    fade_all(prev_left, prev_n, 0, 1.0f);
     an_wait(S, 1.0f);
+    // the two lines that survive
+    for (int k = 0; k < 2; k++) {
+        an_obj *l = an_plane_line(P, (an_vec2){ 0, 0 }, k ? (an_vec2){ 1, -1 } : (an_vec2){ 1, 0 },
+                                  &(an_line_opts){ .name = nm("ch6/span/%d", k), .z = -3, .stroke = k ? CYAN : MAGENTA,
+                                                   .stroke_width = 4, .undrawn = true, .riso = AN_OFF, .shadow = AN_OFF });
+        an_play_async(S, an_draw(l, &(an_anim_opts){ .duration = 1.2f }));
+    }
+    an_wait(S, 1.2f);
     make_ring("ch6", CHARCOAL);
     an_play(S, an_plane_matrix_to(P, A, &(an_anim_opts){ .duration = 3 }));
     color_staying(A);
@@ -495,7 +608,7 @@ int main(int argc, char **argv) {
     if (!S) return 1;
     P = an_plane(S, &(an_plane_opts){ .name = "plane" }); // 1 unit = 100 px at 1080p, origin at the center
 
-    void (*const chapters[NCH])(void) = { chapter0, chapter1, chapter2, chapter3, NULL, NULL, chapter6 };
+    void (*const chapters[NCH])(void) = { chapter0, chapter1, chapter2, chapter3, chapter4, NULL, chapter6 };
     for (int c = 0; c < NCH; c++) {
         if (!BUILT[c]) continue;
         ch_start[c] = an_scene_time(S);
