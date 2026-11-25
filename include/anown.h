@@ -524,10 +524,21 @@ an_obj_state an_obj_get(const an_obj *o);
  * picks which frame to show. On macOS this does not return. */
 void an_scene_preview(an_scene *s);
 
+/* Export quality (docs/progress.md, "Bitrate report"). Both are H.264 in mp4,
+ * BT.709 limited range, color-tagged, with +faststart. */
+typedef enum an_export_quality {
+    AN_EXPORT_SHARE = 0, /* 4:2:0, High profile: plays everywhere (default) */
+    AN_EXPORT_MASTER,    /* 4:4:4, High 4:4:4: full color resolution, near
+                            lossless at its default CRF; for re-editing */
+} an_export_quality;
+#define AN_EXPORT_SHARE_CRF 18
+#define AN_EXPORT_MASTER_CRF 12
+
 typedef struct an_export_desc {
     const char *path; /* default "out.mp4" */
     int64_t frames;   /* default: an_scene_length(s) + 1, the whole timeline */
-    int crf;          /* x264 quality; default 18 */
+    int crf;          /* x264 quality; 0 = the quality's default (above) */
+    an_export_quality quality;
 } an_export_desc;
 
 /* Render frames 0..frames-1 offscreen and encode H.264 mp4 through ffmpeg

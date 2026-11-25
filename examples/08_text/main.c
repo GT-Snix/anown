@@ -9,7 +9,8 @@
 //
 //   ./build/examples/08_text                       preview
 //   ./build/examples/08_text --export out/text.mp4  the whole timeline
-//   ./build/examples/08_text --frames DIR [STEP]    PNG every STEP-th frame (default 5)
+//   ./build/examples/08_text --frames DIR [STEP [FIRST LAST]]  PNG every STEP-th frame (default 5)
+//   any of them with --grain G first: paper grain G instead of 0.06 (bitrate study)
 #include "anown.h"
 
 #include <stdio.h>
@@ -17,8 +18,14 @@
 #include <string.h>
 
 int main(int argc, char **argv) {
+    float grain = 0.0f; // 0: the default
+    if (argc >= 3 && strcmp(argv[1], "--grain") == 0) {
+        grain = (float)atof(argv[2]);
+        argc -= 2;
+        argv += 2;
+    }
     const an_palette *pal = &AN_PALETTE_RIOT;
-    an_scene *s = an_scene_create(&(an_scene_desc){ .fps = 60, .seed = 8, .style = { .palette = pal, .shadow = true } });
+    an_scene *s = an_scene_create(&(an_scene_desc){ .fps = 60, .seed = 8, .style = { .palette = pal, .shadow = true, .grain = grain } });
     if (!s) return 1;
 
     // title: drawn on, then hops
@@ -86,8 +93,9 @@ int main(int argc, char **argv) {
         rc = n > 0 ? 0 : 1;
     } else if (argc >= 3 && strcmp(argv[1], "--frames") == 0) {
         const int step = argc >= 4 ? atoi(argv[3]) : 5;
+        const int64_t first = argc >= 6 ? atoll(argv[4]) : 0, last = argc >= 6 ? atoll(argv[5]) : an_scene_length(s);
         int count = 0;
-        for (int64_t f = 0; f <= an_scene_length(s); f += step > 0 ? step : 5) {
+        for (int64_t f = first; f <= last; f += step > 0 ? step : 5) {
             char path[512];
             snprintf(path, sizeof path, "%s/text_%04lld.png", argv[2], (long long)f);
             if (!an_scene_save_png(s, f, path)) {

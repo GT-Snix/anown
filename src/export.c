@@ -34,18 +34,26 @@ int64_t an_scene_export(an_scene *s, const an_export_desc *desc) {
     const an_export_desc d = desc ? *desc : (an_export_desc){ 0 };
     const char *path = d.path ? d.path : "out.mp4";
     const int64_t frames = d.frames > 0 ? d.frames : an_scene_length(s) + 1; // 0..L inclusive
-    const int crf = d.crf > 0 ? d.crf : 18;
+    const bool master = d.quality == AN_EXPORT_MASTER;
+    const int crf = d.crf > 0 ? d.crf : master ? AN_EXPORT_MASTER_CRF : AN_EXPORT_SHARE_CRF;
 
-    // rgba (sRGB values) -> BT.709 limited-range yuv420p, tagged so players
-    // don't assume BT.601 and shift colors.
+    // rgba (sRGB values) -> BT.709 limited-range YUV, tagged so players don't
+    // assume BT.601 and shift colors; moov atom up front (+faststart) so it
+    // streams. Share: 4:2:0 (plays everywhere). Master: 4:4:4, High 4:4:4
+    // Predictive profile, full color resolution for re-editing.
     char cmd[4096];
     snprintf(cmd, sizeof cmd,
              "ffmpeg -y -loglevel error -f rawvideo -pix_fmt rgba -s %dx%d -framerate %d -i - "
-             "-vf scale=out_color_matrix=bt709:out_range=tv "
-             "-c:v libx264 -preset medium -crf %d -pix_fmt yuv420p "
+             // setparams marks the frames themselves: with ffmpeg 9 the output's
+             // -color_primaries / -color_trc alone are overridden by the frames'
+             // "unknown" and the file ends up untagged
+             "-vf scale=out_color_matrix=bt709:out_range=tv,"
+             "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv "
+             "-c:v libx264 -preset medium -crf %d %s "
              "-colorspace bt709 -color_primaries bt709 -color_trc bt709 -color_range tv "
              "-movflags +faststart ",
-             s->width, s->height, s->fps, crf);
+             s->width, s->height, s->fps, crf,
+             master ? "-pix_fmt yuv444p -profile:v high444" : "-pix_fmt yuv420p -profile:v high");
     if (!shell_quote(cmd, sizeof cmd, path)) {
         fprintf(stderr, "anown: export path too long\n");
         return -1;

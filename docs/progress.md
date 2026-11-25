@@ -572,3 +572,73 @@ track on). Opacity multiplies down the tree. docs/text.md, "Text-level paint
 and the letters". `test_propagation` covers it; making letters never follow
 fails 19 checks, and starting a take-over from the letter's own value instead
 of the text's fails the no-jump check. All 16 test programs pass.
+
+## Bitrate report (2026-11-25)
+
+Question: the lowest bitrate where the 12 Hz paper grain still reads as grain
+while saturated text and riso edges stay clean.
+
+Method (`scripts/bitrate-study.sh`, results in `out/bitrate/results.tsv`):
+- Two 3 s clips (180 frames, 1080p60) rendered as PNGs: 08_text frames 400..579
+  (title with riso, code typing, highlight) and 06_look frames 90..269 (the
+  chaos ramp to full). Each at paper grain 0.03, 0.045 and 0.06 (the default),
+  via the examples' new `--grain G` and `--frames DIR STEP FIRST LAST`.
+- Encoded with export's own arguments at CRF 18, 21, 24, 27, as yuv420p (High)
+  and yuv444p (High 4:4:4), x264 preset medium.
+- Measured against the source PNGs: PSNR and SSIM (RGB, all frames), and grain
+  on a paper-only patch (`spike_grain_measure`): *retained* = high-pass energy
+  decoded / source, *corr* = correlation of the two high-passes (1 = the same
+  grain; 0 = gone or replaced by codec noise).
+- 4x crops of text and riso edges: `out/bitrate/crops/` (README there).
+
+Default grain (0.06), Mbps (text clip / look clip) and grain kept:
+
+| CRF | 4:2:0 Mbps | 4:4:4 Mbps | SSIM 420 | SSIM 444 | PSNR 420 | PSNR 444 | grain retained | grain corr |
+|---|---|---|---|---|---|---|---|---|
+| 18 | 26.2 / 22.1 | 26.0 / 21.8 | 0.935 / 0.927 | 0.943 / 0.937 | 34.4 / 33.0 | 38.2 / 38.0 | 0.97 / 0.68 | 0.80 / 0.49 |
+| 21 | 12.9 / 9.3 | 12.8 / 9.2 | 0.871 / 0.880 | 0.880 / 0.890 | 33.2 / 32.2 | 35.7 / 35.9 | 0.73 / 0.37 | 0.46 / 0.19 |
+| 24 | 3.7 / 2.8 | 3.7 / 2.8 | 0.821 / 0.849 | 0.830 / 0.860 | 32.2 / 31.5 | 34.0 / 34.5 | 0.29 / 0.20 | 0.09 / 0.03 |
+| 27 | 1.45 / 1.44 | 1.46 / 1.43 | 0.816 / 0.844 | 0.826 / 0.855 | 31.6 / 30.8 | 33.4 / 33.5 | 0.12 / 0.13 | 0.00 / 0.00 |
+
+Lower grain amplitude, CRF 18 (4:2:0): 0.045 costs 20.1 / 15.7 Mbps and keeps
+corr 0.64 / 0.29; 0.03 costs 10.8 / 8.9 Mbps, corr 0.31 / 0.12.
+
+Findings:
+- **The grain is the bitrate.** Without it the clips are ~1.4 Mbps at any CRF.
+  x264 keeps it at CRF 18, keeps part of it at 21, and drops it entirely from
+  24 (the paper turns flat). There's no middle ground: grain is noise, and a
+  codec either pays for it or removes it.
+- **Lowering the amplitude doesn't buy efficiency:** grain 0.045 at CRF 18 costs
+  more than 0.06 at CRF 21 and keeps a similar share; 0.03 is faint even before
+  encoding.
+- **x264 `-tune grain`** (`out/bitrate/tune_grain.txt`): at equal bitrate it keeps
+  about the same grain (text: 23.5 Mbps, corr 0.76, vs plain CRF 18 at 26.2, corr
+  0.80). Not adopted.
+- **4:4:4 vs 4:2:0:** within 2% in size at the same CRF, +2.5 to 5 dB PSNR and
+  +0.01 SSIM (the chroma of saturated edges: the cyan riso sliver, the lime bar,
+  magenta text), and the same grain (it's luma). But High 4:4:4 doesn't play in
+  browsers, QuickTime or most hardware decoders, so it's for masters only.
+- **Master** (`out/bitrate/master.txt`), 4:4:4: CRF 12 = 48.5 / 48.8 Mbps, PSNR
+  42.9 / 42.4, SSIM 0.98, grain retained 1.00, corr 0.95 / 0.88. CRF 15 = 37 / 35
+  Mbps, corr 0.90 / 0.75.
+- **Color tagging was broken:** with ffmpeg 9.1, `-color_primaries bt709
+  -color_trc bt709` on the output are overridden by the frames' "unknown", so
+  exports were tagged only with the matrix and range. Fixed by marking the
+  frames with `setparams` in the filter chain; both modes now report
+  bt709/bt709/bt709/tv, and a cyan rect round-trips within 1 level. (The study's
+  encodes predate the fix; tags don't change pixels.)
+
+Export API: `an_export_desc.quality` = `AN_EXPORT_SHARE` (default: 4:2:0, High,
+`AN_EXPORT_SHARE_CRF` 18) or `AN_EXPORT_MASTER` (4:4:4, High 4:4:4 Predictive,
+`AN_EXPORT_MASTER_CRF` 12); `.crf` still overrides. Both color-tagged, with
+`-movflags +faststart` (checked: moov before mdat).
+
+Recommended defaults (set): **share = 4:2:0 CRF 18** (about 22–26 Mbps at 1080p60
+with the default grain: the lowest tested setting where the grain survives in
+both clips); **master = 4:4:4 CRF 12** (about 48 Mbps). If size matters more than
+grain, CRF 21 halves the share file and keeps the grain on text-heavy frames
+but loses most of it on 06_look; I'd judge that from the crops. Platforms that
+re-encode on upload (YouTube etc.) will strip the grain at their own bitrates
+regardless, so upload the master or a CRF 18 share file.
+
+`out/bitrate/` holds 3.5 GB (the source PNGs are most of it; gitignored).
