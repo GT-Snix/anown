@@ -280,7 +280,8 @@ typedef struct an_code_opts {
     AN_OBJ_FIELDS          /* fill: code color (alpha 0: the palette's ink);
                               stroke, stroke_width: the box outline (default ink, 4);
                               riso, shadow: for the code text (AUTO = off) */
-    const char *code;      /* UTF-8; one line per "\n" */
+    const char *code;      /* UTF-8; one line per "\n"; a trailing `//@name` names the
+                              line (an_code_anchor) and isn't shown */
     float size;            /* em size; default 30 (an 18 px advance in the mono) */
     an_font *font;         /* NULL: an_font_mono(s) */
     bool line_numbers;
@@ -622,6 +623,12 @@ an_obj *an_code_marker(an_obj *code, const an_code_marker_opts *opts);
 an_anim an_code_goto(an_obj *code, int line, const an_anim_opts *opts);
 /* Script time: the last line an_code_goto recorded (0: none yet). */
 int an_code_current_line(const an_obj *code);
+/* Named lines: a line of an_code_opts.code ending in `//@name` (letters, digits,
+ * _ and -) gets that anchor; the marker and the spaces before it aren't shown.
+ * The line number of an anchor, or 0 (with a message) if there's none. */
+int an_code_anchor(const an_obj *code, const char *name);
+/* an_code_goto to an anchor's line. */
+an_anim an_code_goto_anchor(an_obj *code, const char *name, const an_anim_opts *opts);
 
 /* A callout (docs/explainer.md): a text label at pos and a curved arrow from the
  * label's edge to `target`, stopping `gap` short. A group: attach it (parent)

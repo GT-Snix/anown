@@ -934,3 +934,9 @@ takes `an_pointer_opts` (label, hidden, size, color, offset). Quicksort frames
 identical to the golden set; reference PNGs identical. Test: `test_containers`
 in test_explainer (blends by hand, overrides, nesting, explicit start, pointer
 options).
+
+## API fixes, 7: named code lines (2026-11-25)
+
+`//@name` anchors in code text (stripped from the display), `an_code_anchor`,
+`an_code_goto_anchor`. The quicksort script uses names instead of numbers;
+frames identical to the golden set. Test: `test_code_anchors`.

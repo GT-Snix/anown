@@ -24,8 +24,8 @@ static int a[N];
 
 // --- small helpers a user ends up writing -------------------------------------------------
 
-// goto a code line and wait for the marker to get there
-static void line(int n) { an_play(S, an_code_goto(code, n, NULL)); }
+// move the code marker to a named line (//@name in the code) and wait for it
+static void line(const char *name) { an_play(S, an_code_goto_anchor(code, name, NULL)); }
 
 // put a slot's element into a named state (colors set on the array)
 static an_handle state(int slot, an_cell_state st) {
@@ -44,7 +44,7 @@ static void focus(int lo, int hi) {
 }
 
 // swap two slots: the cells travel while the code marker moves to the swap line
-static void swap_slots(int i, int j, int code_line) {
+static void swap_slots(int i, int j, const char *code_line) {
     const int t = a[i];
     a[i] = a[j];
     a[j] = t;
@@ -54,32 +54,32 @@ static void swap_slots(int i, int j, int code_line) {
     }
     const an_handle sw = an_play_async(S, an_array_swap(arr, i, j, NULL));
     an_wait(S, 0.15f);
-    an_play(S, an_code_goto(code, code_line, NULL)); // the marker moves while the cells travel
+    an_play(S, an_code_goto_anchor(code, code_line, NULL)); // the marker moves while the cells travel
     an_wait_until(sw);
     an_wait(S, 0.1f); // a beat
 }
 
 static int partition(int lo, int hi) {
-    line(2); // pivot = a[hi], i = lo
+    line("pivot");
     an_play_async(S, an_array_set_state(arr, hi, AN_CELL_ACTIVE, &(an_anim_opts){ .duration = 0.25f })); // the pivot
     an_play_async(S, an_array_point(pi_ptr, lo, NULL));
     an_play(S, an_array_point(pj_ptr, lo, NULL));
     int i = lo;
     for (int j = lo; j < hi; j++) {
         an_play_async(S, an_array_point(pj_ptr, j, NULL));
-        line(3); // for j
-        line(4); // if (a[j] < pivot)
+        line("loop");
+        line("compare");
         an_wait(S, 0.15f);
         if (a[j] < a[hi]) {
-            swap_slots(i, j, 5); // swap(a, i++, j)
+            swap_slots(i, j, "swap");
             i++;
             an_play(S, an_array_point(pi_ptr, i, NULL));
         }
     }
-    swap_slots(i, hi, 6); // swap(a, i, hi): the pivot lands
+    swap_slots(i, hi, "place"); // the pivot lands
     state(i, AN_CELL_DONE);
     an_play(S, an_slap(an_array_item(arr, i), &(an_verb_opts){ .amount = 1.4f }));
-    line(7); // return i
+    line("return");
     return i;
 }
 
@@ -120,12 +120,12 @@ int main(int argc, char **argv) {
     // arcs above and the pointers below
     code = an_code(S, &(an_code_opts){ .pos = { 80, 190 }, .size = 26, .line_numbers = true, .hidden = true,
                                        .code = "int partition(int *a, int lo, int hi) {\n"
-                                               "    int pivot = a[hi], i = lo;\n"
-                                               "    for (int j = lo; j < hi; j++)\n"
-                                               "        if (a[j] < pivot)\n"
-                                               "            swap(a, i++, j);\n"
-                                               "    swap(a, i, hi);\n"
-                                               "    return i;\n"
+                                               "    int pivot = a[hi], i = lo;      //@pivot\n"
+                                               "    for (int j = lo; j < hi; j++)   //@loop\n"
+                                               "        if (a[j] < pivot)           //@compare\n"
+                                               "            swap(a, i++, j);        //@swap\n"
+                                               "    swap(a, i, hi);                 //@place\n"
+                                               "    return i;                       //@return\n"
                                                "}" });
     an_code_marker(code, NULL);
     arr = an_array(S, &(an_array_opts){ .pos = { 960, 800 }, .values = a, .count = N, .cell = { 80, 80 },

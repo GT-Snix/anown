@@ -468,3 +468,13 @@ callout, code block, text):
 - `an_array_pointer(arr, slot, &(an_pointer_opts){ .label, .hidden, .size,
   .color, .offset })`. The offset is from the row's bottom edge to the arrow's
   tip.
+
+### Named code lines (friction 10)
+
+A line of `an_code_opts.code` ending in `//@name` (letters, digits, `_`, `-`;
+only at the very end of the line) gets the anchor `name`. The marker and the
+spaces before it aren't displayed, so the panel looks the same.
+`an_code_anchor(code, name)` returns its line number (0 with a message if
+unknown), and `an_code_goto_anchor(code, name, opts)` goes there. Numeric
+lines still work. The quicksort script names its six lines (`pivot`, `loop`,
+`compare`, `swap`, `place`, `return`) and no longer has line numbers in it.

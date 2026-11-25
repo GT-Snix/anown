@@ -92,6 +92,9 @@ struct an_obj {
             float base0, pitch;      // line 1's baseline (block space), line pitch
             float asc, desc, code_x, code_w, adv;
             int current;             // script time: the last line an_code_goto recorded (0: none)
+            const char **anchor_names; // `//@name` anchors (arena), by index
+            int *anchor_lines;
+            int nanchors;
         } code;
         // AN_KIND_CALLOUT: its parts
         struct {

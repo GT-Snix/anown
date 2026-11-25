@@ -322,7 +322,49 @@ an_obj *an_code(an_scene *s, const an_code_opts *opts) {
     const float size = o.size > 0.0f ? o.size : 30.0f;
     const float k = size / (float)f->upem;
     const int first = o.first_line > 0 ? o.first_line : 1;
-    const char *code = o.code ? o.code : "";
+    // strip `//@name` anchors (and the spaces before them) from the display;
+    // remember name -> line
+    const char *raw = o.code ? o.code : "";
+    char *code = ani_arena_alloc(&s->arena, strlen(raw) + 1, 1);
+    if (!code) return NULL;
+    const char *anames[256];
+    int alines[256], nanch = 0, lineno = first;
+    {
+        char *out = code;
+        const char *p = raw;
+        while (*p) {
+            const char *e = strchr(p, '\n');
+            const size_t len = e ? (size_t)(e - p) : strlen(p);
+            size_t keep = len;
+            const char *m = NULL;
+            for (size_t k = 0; k + 3 <= len; k++) {
+                if (p[k] == '/' && p[k + 1] == '/' && p[k + 2] == '@') m = p + k; // the last one wins
+            }
+            if (m) {
+                const char *n0 = m + 3, *n1 = n0;
+                while (n1 < p + len && ((*n1 >= 'a' && *n1 <= 'z') || (*n1 >= 'A' && *n1 <= 'Z') ||
+                                        (*n1 >= '0' && *n1 <= '9') || *n1 == '_' || *n1 == '-'))
+                    n1++;
+                bool trailing = true;
+                for (const char *q = n1; q < p + len; q++) trailing = trailing && (*q == ' ' || *q == '\t' || *q == '\r');
+                if (n1 > n0 && trailing && nanch < 256) {
+                    char *name = ani_arena_alloc(&s->arena, (size_t)(n1 - n0) + 1, 1);
+                    if (!name) return NULL;
+                    memcpy(name, n0, (size_t)(n1 - n0));
+                    anames[nanch] = name;
+                    alines[nanch++] = lineno;
+                    keep = (size_t)(m - p);
+                    while (keep > 0 && (p[keep - 1] == ' ' || p[keep - 1] == '\t')) keep--;
+                }
+            }
+            memcpy(out, p, keep);
+            out += keep;
+            if (e) *out++ = '\n';
+            p = e ? e + 1 : p + len;
+            lineno++;
+        }
+        *out = 0;
+    }
 
     // split into lines (copies, so each line is its own text)
     int nlines = 1;
@@ -336,6 +378,14 @@ an_obj *an_code(an_scene *s, const an_code_opts *opts) {
     if (!g->u.code.bars || !g->u.code.texts) return NULL;
     g->u.code.nlines = nlines;
     g->u.code.first_line = first;
+    g->u.code.nanchors = nanch;
+    g->u.code.anchor_names = ani_arena_alloc(&s->arena, sizeof(char *) * (size_t)(nanch ? nanch : 1), alignof(char *));
+    g->u.code.anchor_lines = ani_arena_alloc(&s->arena, sizeof(int) * (size_t)(nanch ? nanch : 1), alignof(int));
+    if (!g->u.code.anchor_names || !g->u.code.anchor_lines) return NULL;
+    for (int k = 0; k < nanch; k++) {
+        g->u.code.anchor_names[k] = anames[k];
+        g->u.code.anchor_lines[k] = alines[k];
+    }
 
     // the grid: an advance per column (the mono's '0'), whole-pixel line pitch
     const ani_glyph *zero = ani_font_glyph(f, ani_font_index(f, '0'));
@@ -496,4 +546,17 @@ int64_t ani_code_record_goto(an_scene *s, const an_anim *a, int64_t start) {
     }
     code->u.code.current = line;
     return end;
+}
+
+int an_code_anchor(const an_obj *code, const char *name) {
+    if (!code || code->kind != AN_KIND_CODE || !name) return 0;
+    for (int k = 0; k < code->u.code.nanchors; k++) {
+        if (strcmp(code->u.code.anchor_names[k], name) == 0) return code->u.code.anchor_lines[k];
+    }
+    fprintf(stderr, "anown: an_code_anchor: no line is marked //@%s\n", name);
+    return 0;
+}
+
+an_anim an_code_goto_anchor(an_obj *code, const char *name, const an_anim_opts *opts) {
+    return an_code_goto(code, an_code_anchor(code, name), opts);
 }

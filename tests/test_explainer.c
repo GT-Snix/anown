@@ -461,6 +461,23 @@ static void test_containers(void) {
     an_scene_destroy(s);
 }
 
+// Code anchors: lines 10..12, "a = 1;   //@set", "b = 2;", "c = a; //@use-it":
+// set = 10, use-it = 12; the shown lines are "a = 1;", "b = 2;", "c = a;" (marker
+// and the spaces before it gone); an unknown name is 0; "//@" inside a line that
+// isn't at its end is kept. A goto by anchor is the goto by number.
+static void test_code_anchors(void) {
+    an_scene *s = scene();
+    an_obj *c = an_code(s, &(an_code_opts){ .first_line = 10,
+                                            .code = "a = 1;   //@set\nb = 2; // x //@not end\nc = a; //@use-it" });
+    CHECK(an_code_anchor(c, "set") == 10 && an_code_anchor(c, "use-it") == 12 && an_code_anchor(c, "nope") == 0);
+    CHECK(strcmp(an_code_text(c, 10)->u.text.str, "a = 1;") == 0);
+    CHECK(strcmp(an_code_text(c, 11)->u.text.str, "b = 2; // x //@not end") == 0);
+    CHECK(strcmp(an_code_text(c, 12)->u.text.str, "c = a;") == 0);
+    an_play(s, an_code_goto_anchor(c, "use-it", NULL));
+    CHECK(an_code_current_line(c) == 12);
+    an_scene_destroy(s);
+}
+
 int main(void) {
     if (!ani_gfx_setup_headless()) {
         fprintf(stderr, "test_explainer: headless Metal setup failed\n");
@@ -482,6 +499,7 @@ int main(void) {
     test_pointer();
     test_cursor_and_states();
     test_containers();
+    test_code_anchors();
 
     free(g_px);
     ani_renderer_shutdown(&g_r);
