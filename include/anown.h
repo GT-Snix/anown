@@ -750,6 +750,42 @@ typedef struct an_tree_node {
 bool an_layout_tree(const an_tree_node *nodes, int n, an_vec2 spacing, an_vec2 *out);
 bool an_layout_layered(int n, const int (*edges)[2], int m, an_vec2 spacing, an_vec2 *out);
 
+/* Axes (docs/graphs.md): a group whose pos is the plot box's top-left; x axis
+ * along the bottom, y axis along the left, ticks every step from the range's
+ * first multiple, labeled with %g. */
+typedef struct an_axes_opts {
+    AN_OBJ_FIELDS          /* stroke / stroke_width: the ink (default palette ink, 5) */
+    an_vec2 size;          /* the plot box; default {800, 500} */
+    float x_min, x_max, y_min, y_max; /* default 0..10 each (when max <= min) */
+    float x_step, y_step;  /* tick spacing in data units; 0: about 6 ticks (1, 2 or 5 x 10^k) */
+    const char *x_label, *y_label;
+    float label_size;      /* tick label em size; default 26 */
+} an_axes_opts;
+an_obj *an_axes(an_scene *s, const an_axes_opts *opts);
+/* Data to the axes' own space (y up on screen as data grows). */
+an_vec2 an_axes_point(const an_obj *axes, float x, float y);
+
+typedef enum an_plot_style { AN_PLOT_POINTS = 0, AN_PLOT_BARS } an_plot_style;
+typedef struct an_plot_opts {
+    AN_OBJ_FIELDS          /* function: stroke (palette b), stroke_width (5);
+                              data: fill (palette a), stroke (ink), stroke_width (4) */
+    float from, to;        /* function: the x range to sample; both 0: the axes' x range */
+    an_plot_style style;   /* data */
+    float size;            /* data: point radius (6) or bar width in px (0.6 x width / n) */
+} an_plot_opts;
+typedef float (*an_fn)(float x, void *user);
+/* A function plot: sampled adaptively at creation (32 intervals, split while the
+ * midpoint is over 0.25 px off the chord, depth 8), non-finite values break the
+ * curve, clipped to the box (inset by half the width + the boil) as geometry.
+ * A stroke: an_draw draws it on by arc length. NULL if nothing is inside. */
+an_obj *an_plot_function(an_obj *axes, an_fn f, void *user, const an_plot_opts *opts);
+/* A data plot: a group of points (circles) or bars (rects from y = 0, or the
+ * nearest range end), children of the axes. Points outside the range are
+ * skipped (with a message); bars are clipped to the box. */
+an_obj *an_plot_data(an_obj *axes, const float *xs, const float *ys, int n, const an_plot_opts *opts);
+/* The k-th point or bar actually made (skipped ones don't count). */
+an_obj *an_plot_item(const an_obj *plot, int k);
+
 /* Node and edge states: the array's four (an_cell_state). An edge's state sets
  * its stroke color (and width: 1.5x for ACTIVE and DONE). Default 0.3 s. */
 an_anim an_node_set_state(an_obj *node, an_cell_state state, const an_anim_opts *opts);

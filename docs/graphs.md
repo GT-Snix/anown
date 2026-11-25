@@ -185,6 +185,13 @@ used:
   axes, and composes with everything.
 - **The limit:** what's clipped is fixed at creation. Animating the axes' range
   would need a re-plot (a new object), not a moving window. That's stated.
+- **The shadow isn't clipped.** The hard shadow is the same geometry offset
+  down and right, so near the right and bottom edges it reaches past the box by
+  the shadow offset. Turn the shadow off on the plot (`.shadow = AN_OFF`) if
+  that matters.
+- **Exact mapping:** `an_axes_point` multiplies before dividing
+  (`(x - min) * w / range`), so round values land on exact pixels (6 of 0..10
+  over 800 px is 480, where `6 / 10 * 800` is 479.99997).
 
 **`an_plot_data`:** `.style` BARS (rects from y = 0, or from y_min if 0 is out of
 range) or POINTS (circles of radius 6), children of the axes at their data

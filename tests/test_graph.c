@@ -11,6 +11,7 @@
 #include "scene_internal.h"
 #include "timeline_internal.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -210,6 +211,101 @@ static void test_layout_layered(void) {
     POS(p[0], -50, 0); POS(p[1], 50, 0); POS(p[3], -50, 100); POS(p[2], 50, 100); POS(p[4], 0, 200);
 }
 
+// ---- axes and plots -------------------------------------------------------------------------------
+
+static float half(float x, void *u) { (void)u; return x * 0.5f; }
+static float swing(float x, void *u) { (void)u; return 2.5f + 2.4f * sinf(2.0f * x); }
+static float wave(float x, void *u) { (void)u; return 4.0f + 3.0f * sinf(x); }
+static float hole(float x, void *u) { (void)u; return (x > 4.0f && x < 6.0f) ? NAN : 2.0f; }
+
+// Axes 800 x 500, x 0..10 step 2, y 0..5 step 1: a point maps to (x * 80, 500 - y * 100).
+//   (5, 2.5) -> (400, 250); (0, 0) -> (0, 500); (10, 5) -> (800, 0).
+// Ticks: x at 0, 160, ..., 800 (6), y at 500, 400, ..., 0 (6): with the two axis lines,
+// 14 strokes and 12 labels. Default steps: range 10 -> 10/6 = 1.67 -> 2; range 1 -> 0.2.
+// The plot box inset for the curve: half of 5 + the boil 1.5 = 4: [4, 796] x [4, 496].
+static void test_axes(void) {
+    an_scene *s = scene();
+    an_obj *ax = an_axes(s, &(an_axes_opts){ .pos = { 200, 100 }, .size = { 800, 500 }, .x_max = 10, .y_max = 5,
+                                             .x_step = 2, .y_step = 1 });
+    an_vec2 p = an_axes_point(ax, 5, 2.5f);
+    POS(p, 400, 250);
+    p = an_axes_point(ax, 0, 0);
+    POS(p, 0, 500);
+    p = an_axes_point(ax, 10, 5);
+    POS(p, 800, 0);
+    int strokes = 0, texts = 0, xt = 0, yt = 0;
+    for (an_obj *c = ax->first_child; c; c = c->next_sibling) {
+        if (c->kind == AN_KIND_TEXT) texts++;
+        if (c->kind != AN_KIND_STROKE) continue;
+        strokes++;
+        const an_vec2 a = c->path->pts[0], b = c->path->pts[c->path->npts - 1];
+        if (a.y == 500.0f && b.y == 512.0f && a.x == b.x) CHECK(a.x == 160.0f * (float)xt++);
+        if (a.x == 0.0f && b.x == -12.0f && a.y == b.y) CHECK(a.y == 500.0f - 100.0f * (float)yt++);
+    }
+    CHECK(strokes == 14 && texts == 12 && xt == 6 && yt == 6);
+    an_obj *d = an_axes(s, &(an_axes_opts){ .y_max = 1 }); // x 0..10 default, y 0..1: steps 2 and 0.2
+    int dx = 0, dy = 0;
+    for (an_obj *c = d->first_child; c; c = c->next_sibling) {
+        if (c->kind != AN_KIND_STROKE) continue;
+        const an_vec2 a = c->path->pts[0], b = c->path->pts[c->path->npts - 1];
+        dx += a.y == 500.0f && b.y == 512.0f;
+        dy += a.x == 0.0f && b.x == -12.0f;
+    }
+    CHECK(dx == 6 && dy == 6);
+
+    // f(x) = x / 2: a straight line from (0, 500) to (800, 0), slope -0.625, so no
+    // splits: 33 samples. Clipped to the inset box: it enters where y = 496 (x = 6.4,
+    // since x = 4 still has y 497.5) and leaves where y = 4 (x = 793.6). One subpath.
+    an_obj *lin = an_plot_function(ax, half, NULL, NULL);
+    CHECK(lin && lin->path->nsubs == 1 && lin->path->npts == 33);
+    CHECK_NEAR(lin->path->pts[0].x, 6.4, 1e-3);
+    CHECK_NEAR(lin->path->pts[0].y, 496, 1e-3);
+    CHECK_NEAR(lin->path->pts[32].x, 793.6, 1e-3);
+    CHECK_NEAR(lin->path->pts[32].y, 4, 1e-3);
+    // f(x) = 2.5 + 2.4 sin 2x (0.1..4.9, inside the box): curved enough to split (240 px
+    // amplitude, 400 px period: about 11 px off the chord over a 25 px interval), so more
+    // than 33 samples; every point is (x * 80, 500 - f(x) * 100) for its own x
+    an_obj *par = an_plot_function(ax, swing, NULL, NULL);
+    CHECK(par && par->path->npts > 33);
+    int exact = 0;
+    for (int i = 0; i < par->path->npts; i++) {
+        const an_vec2 q = par->path->pts[i];
+        if (q.x <= 4.0f || q.x >= 796.0f || q.y <= 4.0f || q.y >= 496.0f) continue;
+        const float x = q.x / 80.0f;
+        exact += fabsf(q.y - (500.0f - swing(x, NULL) * 100.0f)) < 1e-3f;
+        CHECK_NEAR(q.y, 500.0f - swing(x, NULL) * 100.0f, 2e-3);
+    }
+    CHECK(exact > 20);
+    // f(x) = 4 + 3 sin x leaves the top (f > 5 when sin x > 1/3: x in (0.34, 2.80) and
+    // (6.62, 9.08)) and comes back: 3 subpaths, all inside the inset box
+    an_obj *wv = an_plot_function(ax, wave, NULL, NULL);
+    CHECK(wv && wv->path->nsubs == 3);
+    for (int i = 0; wv && i < wv->path->npts; i++) {
+        const an_vec2 q = wv->path->pts[i];
+        CHECK(q.x >= 4.0f - 1e-3f && q.x <= 796.0f + 1e-3f && q.y >= 4.0f - 1e-3f && q.y <= 496.0f + 1e-3f);
+    }
+    // non-finite for 4 < x < 6: the curve breaks into 2 subpaths
+    an_obj *ho = an_plot_function(ax, hole, NULL, NULL);
+    CHECK(ho && ho->path->nsubs == 2);
+
+    // bars at x 2, 4, 6 with values 3, 7, -1 on y 0..5: the first is 300 px tall,
+    // centered at y 500 - 150 = 350 and x 160; the second is clipped to 5 (500 px,
+    // center 250); the third to 0 (no height). Points: 7 and -1 are outside 0..5, so
+    // one point, (2, 3) -> (160, 200).
+    const float xs[3] = { 2, 4, 6 }, ys[3] = { 3, 7, -1 };
+    an_obj *bars = an_plot_data(ax, xs, ys, 3, &(an_plot_opts){ .style = AN_PLOT_BARS });
+    an_obj *b0 = an_plot_item(bars, 0), *b1 = an_plot_item(bars, 1), *b2 = an_plot_item(bars, 2);
+    CHECK(b0 && b1 && b2 && !an_plot_item(bars, 3));
+    CHECK(b0->u.rect.size.y == 300.0f && b0->pos.x == 160.0f && b0->pos.y == 350.0f);
+    CHECK(b1->u.rect.size.y == 500.0f && b1->pos.y == 250.0f);
+    CHECK(b2->u.rect.size.y < 0.01f && b2->pos.y == 500.0f);
+    an_obj *pts = an_plot_data(ax, xs, ys, 3, NULL);
+    CHECK(an_plot_item(pts, 0) && !an_plot_item(pts, 1));
+    p = an_plot_item(pts, 0)->pos;
+    POS(p, 160, 200);
+    an_scene_destroy(s);
+}
+
 int main(void) {
     if (!ani_gfx_setup_headless()) {
         fprintf(stderr, "test_graph: headless Metal setup failed\n");
@@ -225,6 +321,7 @@ int main(void) {
     test_states();
     test_layout_tree();
     test_layout_layered();
+    test_axes();
 
     free(g_px);
     ani_renderer_shutdown(&g_r);
