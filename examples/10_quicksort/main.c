@@ -123,7 +123,7 @@ int main(int argc, char **argv) {
     // title: letters slap in
     an_obj *title = an_text(S, &(an_text_opts){ .text = "QUICKSORT", .pos = { 960, 92 }, .size = 120, .align = AN_ALIGN_CENTER,
                                                  .anchor = AN_ANCHOR_MIDDLE, .fill = pal->b, .stroke = pal->ink,
-                                                 .stroke_width = 7, .letters_hidden = true });
+                                                 .stroke_width = 7 });
     // the code panel (Lomuto partition), top left; the array low, with room for the
     // arcs above and the pointers below
     code = an_code(S, &(an_code_opts){ .pos = { 80, 190 }, .size = 26, .line_numbers = true, .hidden = true,
@@ -142,21 +142,18 @@ int main(int argc, char **argv) {
     pj_ptr = an_array_pointer(arr, "j", 0);
     an_obj_set_opacity(pi_ptr, 0);
     an_obj_set_opacity(pj_ptr, 0);
-    for (int k = 0; k < N; k++) an_obj_set_opacity(an_array_item(arr, k), 0); // until their pop
 
     // intro
     an_wait(S, 0.3f);
     for (int k = 0; k < an_text_length(title); k++) {
         an_obj *g = an_text_glyph(title, k);
-        an_obj_set_opacity(g, 1);
-        an_play_async(S, an_slap(g, &(an_verb_opts){ .impact_shake = k == an_text_length(title) - 1 ? 14.0f : 0.0f }));
+        an_play_async(S, an_slap(g, &(an_verb_opts){ .enter = AN_ON,
+                                                     .impact_shake = k == an_text_length(title) - 1 ? 14.0f : 0.0f }));
         an_wait(S, 0.08f);
     }
     an_wait(S, 0.5f);
     for (int k = 0; k < N; k++) {
-        an_obj *e = an_array_item(arr, k);
-        an_obj_set_opacity(e, 1);
-        an_play_async(S, an_pop(e, NULL));
+        an_play_async(S, an_pop(an_array_item(arr, k), NULL)); // a pop is an entrance: hidden until it starts
         an_wait(S, 0.07f);
     }
     an_play(S, an_fade_to(code, 1, &(an_anim_opts){ .duration = 0.5f }));

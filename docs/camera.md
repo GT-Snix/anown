@@ -360,3 +360,12 @@ Three, in this order (the slap's impact shake needs the shake):
 - a node pops in, and another squash-stretches.
 
 Exported in share mode, with export time and the frame bench numbers reported.
+
+## Entrances (2026-11-25)
+
+`an_verb_opts.enter` (`an_toggle`): ON hides the object from its creation until
+the verb starts. It's an instant opacity 0 at the object's birth and an instant
+1 at the verb's start: ordinary step tracks, no fade, so cells of a touching
+array don't seam (rule 13). AUTO means on for `an_pop` (it grows from nothing:
+an entrance by nature), off for `an_slap` and `an_squash_stretch` (they act on
+something already there unless asked).

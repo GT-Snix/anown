@@ -389,6 +389,25 @@ static void test_no_history(void) {
     an_scene_destroy(s);
 }
 
+// Entrances: objects created at 0, verbs started at 0.5 s (frame 30).
+//   an_pop (enter AUTO = on): opacity 0 at frames 0..29, 1 from frame 30
+//   an_slap without .enter: visible (1) before its start
+//   an_slap with .enter = AN_ON: 0 before, 1 from frame 30
+static void test_enter(void) {
+    an_scene *s = scene(false);
+    an_obj *p = an_rect(s, NULL), *q = an_rect(s, NULL), *r = an_rect(s, NULL);
+    an_wait(s, 0.5f);
+    an_play_async(s, an_pop(p, NULL));
+    an_play_async(s, an_slap(q, NULL));
+    an_play(s, an_slap(r, &(an_verb_opts){ .enter = AN_ON }));
+    for (int64_t f = 0; f <= 40; f++) {
+        an_seek(s, f);
+        const float want = f < 30 ? 0.0f : 1.0f;
+        CHECK(an_obj_get(p).opacity == want && an_obj_get(r).opacity == want && an_obj_get(q).opacity == 1.0f);
+    }
+    an_scene_destroy(s);
+}
+
 int main(void) {
     if (!ani_gfx_setup_headless()) {
         fprintf(stderr, "test_camera: headless Metal setup failed\n");
@@ -408,6 +427,7 @@ int main(void) {
     test_pivot();
     test_slap_text_chaos();
     test_no_history();
+    test_enter();
 
     free(g_px);
     ani_renderer_shutdown(&g_r);

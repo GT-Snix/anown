@@ -590,6 +590,15 @@ static int64_t record_verb(an_scene *s, const an_anim *a, int64_t start) {
     const an_verb_opts *v = &a->verb_opts;
     // the pivot, as a step at the start: a later default-pivot verb puts the center back
     const an_vec2 pivot = v->custom_pivot ? v->pivot : o->vpivot; // base: the center
+    // an entrance: hidden from creation until the verb starts (instant opacity
+    // changes at the object's birth and at the start; no fade, so touching
+    // shapes don't seam)
+    const bool enter = v->enter == AN_ON || (v->enter == AN_AUTO && a->verb == AN_VERB_POP);
+    if (enter) {
+        const int64_t birth = o->birth < start ? o->birth : start;
+        ani_record(s, ani_obj_prop(o, AN_PROP_OPACITY), birth, 0, AN_EASE_LINEAR, (ani_value){ { 0 } }, false, NULL);
+        ani_record(s, ani_obj_prop(o, AN_PROP_OPACITY), start, 0, AN_EASE_LINEAR, (ani_value){ { 1 } }, false, NULL);
+    }
     ani_record(s, ani_obj_prop(o, AN_PROP_VERB_PIVOT), start, 0, AN_EASE_LINEAR, (ani_value){ { pivot.x, pivot.y } },
                false, NULL);
     an_ease ease;

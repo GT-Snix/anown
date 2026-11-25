@@ -474,6 +474,8 @@ typedef struct an_verb_opts {
     bool custom_pivot;
     float impact_shake;    /* an_slap: camera shake intensity (screen px) at impact; 0: none */
     float impact_shake_duration; /* 0: 0.5 s */
+    an_toggle enter;       /* ON: the object is hidden from its creation until the verb
+                              starts (an entrance). AUTO: on for an_pop, off otherwise */
 } an_verb_opts;
 
 /* What an an_anim records when played: one track (NONE), or several (the verbs,

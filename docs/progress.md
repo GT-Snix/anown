@@ -909,3 +909,10 @@ quicksort script's hand-typed arithmetic (`an_wait(0.9 - 0.15 - 0.35 + 0.1)` and
 the paint waits) is gone: `an_wait_until(swap)` plus explicit beats. Golden
 comparison: all 273 frames identical (the cursor lands on the same ticks).
 Test: `test_handles` in test_timeline (hand-computed starts and ends).
+
+## API fixes, 2: entrances (2026-11-25)
+
+`an_verb_opts.enter` (docs/camera.md, "Entrances"): hidden from creation until the
+verb starts; AUTO = on for pops. The quicksort script's per-object opacity
+flips (array cells, title letters) are gone; frames identical to the golden set.
+Test: `test_enter` in test_camera.
