@@ -440,6 +440,7 @@ typedef enum an_prop {
     AN_PROP_VERB_SCALE,      /* vec2, default {1, 1} */
     AN_PROP_VERB_ROTATION,   /* radians, default 0 */
     AN_PROP_VERB_PIVOT,      /* local units, step; default the object's center */
+    AN_PROP_CELL_STATE,      /* array cells: their named state (an_array_set_state); step */
     AN_PROP_COUNT
 } an_prop;
 
@@ -481,7 +482,7 @@ typedef struct an_verb_opts {
 /* What an an_anim records when played: one track (NONE), or several (the verbs,
  * and an_array_swap). */
 typedef enum an_verb_kind { AN_VERB_NONE = 0, AN_VERB_SLAP, AN_VERB_POP, AN_VERB_SQUASH, AN_VERB_SWAP,
-                            AN_VERB_CODE_GOTO, AN_VERB_CALLOUT_DRAW } an_verb_kind;
+                            AN_VERB_CODE_GOTO, AN_VERB_CALLOUT_DRAW, AN_VERB_CELL_STATE } an_verb_kind;
 
 typedef struct an_anim {
     an_obj *obj;
@@ -579,7 +580,12 @@ typedef struct an_array_opts {
     bool index_labels;
     bool no_values;
     an_font *font;         /* labels; NULL: an_font_mono */
+    an_color state_colors[4]; /* by an_cell_state; alpha 0: base = fill, active = palette b,
+                                 dimmed = paper mixed 12% toward ink, done = palette c */
 } an_array_opts;
+
+/* Named cell states (an_array_set_state). */
+typedef enum an_cell_state { AN_CELL_BASE = 0, AN_CELL_ACTIVE, AN_CELL_DIMMED, AN_CELL_DONE } an_cell_state;
 
 an_obj *an_array(an_scene *s, const an_array_opts *opts);
 /* The element (cell or bar group) in `slot`, as of the swaps played so far. */
@@ -593,6 +599,12 @@ an_vec2 an_array_slot_pos(const an_obj *arr, int slot);
 an_anim an_array_swap(an_obj *arr, int i, int j, const an_anim_opts *opts);
 an_anim an_array_highlight(an_obj *arr, int slot, an_color fill, const an_anim_opts *opts);
 an_anim an_array_unhighlight(an_obj *arr, int slot, const an_anim_opts *opts);
+/* Put the element in `slot` into a named state: a fill track to the state's
+ * color (default 0.3 s) and a step on its state property, both on the element's
+ * cell, so the state follows the element through swaps. */
+an_anim an_array_set_state(an_obj *arr, int slot, an_cell_state state, const an_anim_opts *opts);
+/* Script time: the state of the element in `slot` at the cursor. */
+an_cell_state an_array_state_at_cursor(const an_obj *arr, int slot);
 
 /* The current-line marker (docs/explainer.md): a bar behind the line box and an
  * arrow left of the block, created hidden. an_code_goto shows it at a line the
@@ -693,6 +705,9 @@ float an_obj_chaos(const an_obj *o);
 
 /* The object's own (parent-relative) state at the frame last passed to an_seek. */
 an_obj_state an_obj_get(const an_obj *o);
+/* The same at the cursor (script time): what the tracks recorded so far give at
+ * the cursor's time. Pure: depends only on what's been recorded. */
+an_obj_state an_obj_at_cursor(const an_obj *o);
 
 /* ---- output ------------------------------------------------------------- */
 

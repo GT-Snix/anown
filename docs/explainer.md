@@ -415,3 +415,22 @@ the library; each item shows how the script coped.
 
 Parallel with a gap (doc item 5): demonstrated in `swap_slots`; it is awkward
 (item 1).
+
+## API fixes from the friction list (2026-11-25)
+
+### Script-time queries and named states (friction 8, 9)
+
+- `an_obj_at_cursor(o)`: the object's state at the cursor's time, from the
+  tracks recorded so far. It's pure: it samples tracks like rendering does, at
+  a different time.
+- **Named states:** `an_cell_state` is BASE, ACTIVE, DIMMED or DONE, with
+  colors in `an_array_opts.state_colors`.
+  - Defaults: the fill, the palette's accent b, paper mixed 12% toward ink, and
+    the palette's accent c.
+  - `an_array_set_state(arr, slot, state, opts)` records a fill track to the
+    state's color and an instant step on the cell's `AN_PROP_CELL_STATE`.
+  - `an_array_state_at_cursor` reads that property. The state is set at the
+    step, even while the fill is still changing, and it follows the element
+    through swaps.
+  - It's ordinary track data, not hidden state.
+- The quicksort script's `done[]` array and its `paint` helper are gone.

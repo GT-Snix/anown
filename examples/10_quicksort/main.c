@@ -21,25 +21,23 @@ enum { N = 9 };
 static an_scene *S;
 static an_obj *arr, *code, *pi_ptr, *pj_ptr;
 static int a[N];
-static bool done[N];
-static an_color c_cell, c_dim, c_pivot, c_done;
 
 // --- small helpers a user ends up writing -------------------------------------------------
 
 // goto a code line and wait for the marker to get there
 static void line(int n) { an_play(S, an_code_goto(code, n, NULL)); }
 
-// recolor one slot (the element currently there)
-static an_handle paint(int slot, an_color c, float secs) {
-    return an_play_async(S, an_array_highlight(arr, slot, c, &(an_anim_opts){ .duration = secs }));
+// put a slot's element into a named state (colors set on the array)
+static an_handle state(int slot, an_cell_state st) {
+    return an_play_async(S, an_array_set_state(arr, slot, st, NULL));
 }
 
 // the active range bright, the rest dim (done cells stay green)
 static void focus(int lo, int hi) {
     an_handle h = { 0 };
     for (int k = 0; k < N; k++) {
-        if (done[k]) continue;
-        h = paint(k, (k >= lo && k <= hi) ? c_cell : c_dim, 0.3f);
+        if (an_array_state_at_cursor(arr, k) == AN_CELL_DONE) continue;
+        h = state(k, (k >= lo && k <= hi) ? AN_CELL_BASE : AN_CELL_DIMMED);
     }
     an_wait_until(h);
     an_wait(S, 0.05f); // a beat
@@ -63,7 +61,7 @@ static void swap_slots(int i, int j, int code_line) {
 
 static int partition(int lo, int hi) {
     line(2); // pivot = a[hi], i = lo
-    paint(hi, c_pivot, 0.25f);
+    an_play_async(S, an_array_set_state(arr, hi, AN_CELL_ACTIVE, &(an_anim_opts){ .duration = 0.25f })); // the pivot
     an_play_async(S, an_array_point(pi_ptr, lo, NULL));
     an_play(S, an_array_point(pj_ptr, lo, NULL));
     int i = lo;
@@ -79,8 +77,7 @@ static int partition(int lo, int hi) {
         }
     }
     swap_slots(i, hi, 6); // swap(a, i, hi): the pivot lands
-    done[i] = true;
-    paint(i, c_done, 0.3f);
+    state(i, AN_CELL_DONE);
     an_play(S, an_slap(an_array_item(arr, i), &(an_verb_opts){ .amount = 1.4f }));
     line(7); // return i
     return i;
@@ -89,8 +86,7 @@ static int partition(int lo, int hi) {
 static void quicksort(int lo, int hi) {
     if (lo > hi) return;
     if (lo == hi) { // one element: already in place
-        done[lo] = true;
-        an_wait_until(paint(lo, c_done, 0.3f));
+        an_wait_until(state(lo, AN_CELL_DONE));
         an_wait(S, 0.05f); // a beat
         return;
     }
@@ -104,10 +100,6 @@ int main(int argc, char **argv) {
     const an_palette *pal = &AN_PALETTE_RIOT;
     S = an_scene_create(&(an_scene_desc){ .fps = 60, .seed = 10, .style = { .palette = pal, .shadow = true } });
     if (!S) return 1;
-    c_cell = pal->a;
-    c_pivot = pal->b;
-    c_done = pal->c;
-    c_dim = AN_HEX(0xD6D2C8); // paper, a little darker
 
     // 9 distinct values 1..20 from the scene's seeded stream
     an_rng *rng = an_scene_rng(S);
@@ -137,7 +129,8 @@ int main(int argc, char **argv) {
                                                "}" });
     an_code_marker(code, NULL);
     arr = an_array(S, &(an_array_opts){ .pos = { 960, 800 }, .values = a, .count = N, .cell = { 80, 80 },
-                                        .index_labels = true, .fill = c_cell });
+                                        .index_labels = true, .fill = pal->a,
+                                        .state_colors = { [AN_CELL_DIMMED] = AN_HEX(0xD6D2C8) } }); // paper, a little darker
     pi_ptr = an_array_pointer(arr, "i", 0);
     pj_ptr = an_array_pointer(arr, "j", 0);
     an_obj_set_opacity(pi_ptr, 0);

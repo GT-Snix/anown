@@ -44,6 +44,8 @@ an_obj *an_array(an_scene *s, const an_array_opts *opts) {
     a->u.array.style = o.style;
     const an_color fill = o.fill.a > 0.0f ? o.fill : pal->a;
     a->u.array.fill = fill;
+    const an_color defaults[4] = { fill, pal->b, mix(s->background, pal->ink, 0.12f), pal->c };
+    for (int k = 0; k < 4; k++) a->u.array.states[k] = o.state_colors[k].a > 0.0f ? o.state_colors[k] : defaults[k];
     int vmax = 1;
     for (int k = 0; k < n; k++) vmax = o.values[k] > vmax ? o.values[k] : vmax;
     // cells with a pattern fill get paper under them by default
@@ -226,4 +228,31 @@ int64_t ani_array_record_swap(an_scene *s, const an_anim *x, int64_t start) {
     a->u.array.busy[i] = a->u.array.busy[j] = endA;
     (void)ea_end;
     return endA;
+}
+
+// ---- named cell states ---------------------------------------------------------------------
+
+an_anim an_array_set_state(an_obj *a, int slot, an_cell_state state, const an_anim_opts *opts) {
+    an_anim x = { .obj = a, .verb = AN_VERB_CELL_STATE, .swap_i = slot, .swap_j = (int)state };
+    if (opts) x.opts = *opts;
+    if (!(x.opts.duration > 0.0f)) x.opts.duration = 0.3f;
+    return x;
+}
+
+int64_t ani_array_record_state(an_scene *s, const an_anim *x, int64_t start) {
+    an_obj *a = x->obj;
+    const int slot = x->swap_i, st = x->swap_j;
+    if (!valid(a, slot) || st < 0 || st > 3) return start;
+    an_obj *cell = an_array_cell(a, slot);
+    ani_record(s, ani_obj_prop(cell, AN_PROP_CELL_STATE), start, 0, AN_EASE_LINEAR, (ani_value){ { (double)st } },
+               false, NULL);
+    const an_anim f = an_fill_to(cell, a->u.array.states[st], &x->opts);
+    return ani_record_anim(s, &f, start);
+}
+
+an_cell_state an_array_state_at_cursor(const an_obj *a, int slot) {
+    if (!valid(a, slot)) return AN_CELL_BASE;
+    an_obj *cell = an_array_cell(a, slot);
+    const ani_value v = ani_sample(ani_obj_prop(cell, AN_PROP_CELL_STATE), ani_tick_time(a->scene->cursor));
+    return (an_cell_state)(int)v.v[0];
 }

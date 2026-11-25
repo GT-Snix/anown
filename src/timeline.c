@@ -28,6 +28,7 @@ static const ani_prop_info g_props[AN_PROP_COUNT] = {
     [AN_PROP_VERB_SCALE] = { 2, ANI_SPACE_LINEAR, 1e-4 },
     [AN_PROP_VERB_ROTATION] = { 1, ANI_SPACE_LINEAR, 1e-4 },
     [AN_PROP_VERB_PIVOT] = { 2, ANI_SPACE_STEP, 0.0 },
+    [AN_PROP_CELL_STATE] = { 1, ANI_SPACE_STEP, 0.0 },
 };
 
 #define SETTLE_RELATIVE 1e-3 // spring tolerance relative to travel distance
@@ -83,6 +84,7 @@ ani_value ani_base_get(ani_prop_ref ref) {
     case AN_PROP_VERB_SCALE: return (ani_value){ { o->vscale.x, o->vscale.y } };
     case AN_PROP_VERB_ROTATION: return (ani_value){ { o->vrot } };
     case AN_PROP_VERB_PIVOT: return (ani_value){ { o->vpivot.x, o->vpivot.y } };
+    case AN_PROP_CELL_STATE: return (ani_value){ { (double)o->cell_state } };
     default: break; // camera properties aren't the object's
     }
     return (ani_value){ { 0 } };
@@ -112,6 +114,7 @@ static void base_set(ani_prop_ref ref, ani_value v) {
     case AN_PROP_VERB_SCALE: o->vscale = (an_vec2){ (float)v.v[0], (float)v.v[1] }; break;
     case AN_PROP_VERB_ROTATION: o->vrot = (float)v.v[0]; break;
     case AN_PROP_VERB_PIVOT: o->vpivot = (an_vec2){ (float)v.v[0], (float)v.v[1] }; break;
+    case AN_PROP_CELL_STATE: o->cell_state = (int)v.v[0]; break;
     default: break;
     }
 }
@@ -672,6 +675,7 @@ int64_t ani_record_anim(an_scene *s, const an_anim *a, int64_t start) {
     if (a->verb == AN_VERB_SWAP && a->obj) return ani_array_record_swap(s, a, start);
     if (a->verb == AN_VERB_CODE_GOTO && a->obj) return ani_code_record_goto(s, a, start);
     if (a->verb == AN_VERB_CALLOUT_DRAW && a->obj) return ani_callout_record_draw(s, a, start);
+    if (a->verb == AN_VERB_CELL_STATE && a->obj) return ani_array_record_state(s, a, start);
     if (a->verb != AN_VERB_NONE && a->obj) return record_verb(s, a, start);
     const bool spring = a->opts.ease.kind == AN_EASE_KIND_SPRING;
     int64_t duration = ani_ticks(a->opts.duration);
@@ -745,10 +749,20 @@ void an_seek(an_scene *s, int64_t frame) {
     if (s) s->frame = frame < 0 ? 0 : frame;
 }
 
+static an_obj_state obj_state_at(const an_obj *o, ani_time at);
+
 an_obj_state an_obj_get(const an_obj *o) {
     if (!o) return (an_obj_state){ 0 };
+    return obj_state_at(o, ani_frame_time(o->scene, o->scene->frame));
+}
+
+an_obj_state an_obj_at_cursor(const an_obj *o) {
+    if (!o) return (an_obj_state){ 0 };
+    return obj_state_at(o, ani_tick_time(o->scene->cursor));
+}
+
+static an_obj_state obj_state_at(const an_obj *o, ani_time at) {
     an_obj *m = (an_obj *)o; // sampling reads only; the handle type isn't const
-    const ani_time at = ani_frame_time(o->scene, o->scene->frame);
     const ani_value pos = ani_sample(ani_obj_prop(m, AN_PROP_POS), at);
     const ani_value sc = ani_sample(ani_obj_prop(m, AN_PROP_SCALE), at);
     return (an_obj_state){

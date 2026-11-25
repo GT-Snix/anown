@@ -368,6 +368,40 @@ static void test_pointer(void) {
     an_scene_destroy(s);
 }
 
+// ---- script-time queries and named states ------------------------------------------------
+
+// an_obj_at_cursor: a fade 1 -> 0.5 over 1 s (in-out) played async at 0, cursor
+// moved to 0.5 s: the eased progress is 0.5, so opacity 0.75; an_seek elsewhere
+// doesn't change it (it's the cursor, not the seek frame).
+// States on array5: DONE on slot 2 (async, 0.3 s): the query says DONE at once
+// (the state is a step at the start), while the fill at the cursor is still the
+// base color; after a swap 2 <-> 4 the DONE element is in slot 4. Default dimmed:
+// paper mixed 12% toward ink = (243 - 0.12 x 221, 237 - 0.12 x 215, 226 - 0.12 x 200)
+// = (216.48, 211.2, 202) / 255.
+static void test_cursor_and_states(void) {
+    an_scene *s = scene();
+    an_obj *r = an_rect(s, NULL);
+    an_play_async(s, an_fade_to(r, 0.5f, &(an_anim_opts){ .duration = 1 }));
+    an_wait(s, 0.5f);
+    an_seek(s, 0);
+    CHECK_NEAR(an_obj_at_cursor(r).opacity, 0.75, 1e-6);
+    an_obj *a = array5(s, (an_vec2){ 960, 900 }, NULL);
+    an_play_async(s, an_array_set_state(a, 2, AN_CELL_DONE, NULL));
+    CHECK(an_array_state_at_cursor(a, 2) == AN_CELL_DONE && an_array_state_at_cursor(a, 1) == AN_CELL_BASE);
+    const an_color cyan = AN_HEX(0x00C2FF), lime = AN_HEX(0xC6FF00);
+    CHECK(an_obj_at_cursor(an_array_cell(a, 2)).fill.g == cyan.g); // the fill track has just started
+    an_play(s, an_array_swap(a, 2, 4, NULL));
+    CHECK(an_array_state_at_cursor(a, 4) == AN_CELL_DONE && an_array_state_at_cursor(a, 2) == AN_CELL_BASE);
+    const an_obj_state st = an_obj_at_cursor(an_array_cell(a, 4));
+    CHECK(st.fill.r == lime.r && st.fill.g == lime.g && st.fill.b == lime.b);
+    an_play(s, an_array_set_state(a, 0, AN_CELL_DIMMED, NULL));
+    const an_color d = an_obj_at_cursor(an_array_cell(a, 0)).fill;
+    CHECK_NEAR(d.r * 255.0, 216.48, 1e-3);
+    CHECK_NEAR(d.g * 255.0, 211.2, 1e-3);
+    CHECK_NEAR(d.b * 255.0, 202.0, 1e-3);
+    an_scene_destroy(s);
+}
+
 int main(void) {
     if (!ani_gfx_setup_headless()) {
         fprintf(stderr, "test_explainer: headless Metal setup failed\n");
@@ -387,6 +421,7 @@ int main(void) {
     test_code_marker();
     test_callout();
     test_pointer();
+    test_cursor_and_states();
 
     free(g_px);
     ani_renderer_shutdown(&g_r);

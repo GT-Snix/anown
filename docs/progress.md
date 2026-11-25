@@ -916,3 +916,10 @@ Test: `test_handles` in test_timeline (hand-computed starts and ends).
 verb starts; AUTO = on for pops. The quicksort script's per-object opacity
 flips (array cells, title letters) are gone; frames identical to the golden set.
 Test: `test_enter` in test_camera.
+
+## API fixes, 3 and 4: cursor queries and named cell states (2026-11-25)
+
+`an_obj_at_cursor`; `an_array_set_state` / `an_array_state_at_cursor` with
+`an_array_opts.state_colors` (docs/explainer.md). The quicksort script's own
+bookkeeping (`done[]`, the color variables, `paint`) is gone; frames identical
+to the golden set. Test: `test_cursor_and_states` in test_explainer.
