@@ -150,6 +150,7 @@ typedef enum an_kind {
     AN_KIND_NODE,    /* a graph node (an_node): a group of a shape and a label */
     AN_KIND_EDGE,    /* a graph edge (an_edge): endpoints resolved from its nodes each frame */
     AN_KIND_AXES,    /* axes (an_axes): a group of axis lines, ticks and labels */
+    AN_KIND_GRAPH,   /* a graph (an_graph): a group owning its nodes and edges */
 } an_kind;
 
 typedef struct an_obj an_obj;
@@ -732,8 +733,30 @@ typedef struct an_edge_opts {
     bool directed;
     float bend;            /* -1..1: curvature (0 straight); positive bulges up the screen */
     float gap;             /* default 6 */
+    an_color state_colors[4]; /* by an_state; alpha 0: base = stroke, then the graph's
+                                 (an_graph_edge) or palette b / faded ink / palette c */
 } an_edge_opts;
+/* A free edge (not in a graph): for one-off connections between objects. */
 an_obj *an_edge(an_scene *s, const an_edge_opts *opts);
+
+/* A graph: a group that owns its nodes and edges (docs/api-fixes.md, item 1).
+ * Inside it, edges draw under nodes: edges default to z -1, nodes to z 0
+ * (siblings sort by z, then creation). Fading or moving the graph moves all of it. */
+typedef struct an_graph_opts {
+    AN_OBJ_FIELDS
+    bool directed;            /* every edge gets an arrowhead */
+    an_color state_colors[4]; /* ACTIVE / DIMMED / DONE for nodes and edges alike (alpha 0:
+                                 the defaults); [AN_STATE_BASE] is ignored: each keeps its own */
+} an_graph_opts;
+an_obj *an_graph(an_scene *s, const an_graph_opts *opts);
+/* A node of the graph (opts->parent is ignored: the graph is the parent). */
+an_obj *an_graph_node(an_obj *graph, const an_node_opts *opts);
+/* An edge a -> b of the graph (opts->from / to / parent are ignored). NULL if a or
+ * b isn't the graph's node; a second edge for the same ordered pair returns the
+ * first (with a message). */
+an_obj *an_graph_edge(an_obj *graph, an_obj *a, an_obj *b, const an_edge_opts *opts);
+/* a -> b if it exists, else b -> a, else NULL. */
+an_obj *an_graph_edge_between(const an_obj *graph, const an_obj *a, const an_obj *b);
 
 /* Layouts (docs/graphs.md): pure, deterministic, at script time. They fill
  * out[n] with positions relative to the root (tree) or the top middle (layered);
@@ -791,9 +814,18 @@ an_obj *an_plot_item(const an_obj *plot, int k);
 an_anim an_node_set_state(an_obj *node, an_state state, const an_anim_opts *opts);
 an_anim an_edge_set_state(an_obj *edge, an_state state, const an_anim_opts *opts);
 an_state an_node_state_at_cursor(const an_obj *node);
-/* Set every object (nodes and edges, in path order) to `state`, `gap` seconds
- * apart: one anim. The list is copied. */
-an_anim an_highlight_path(an_obj *const *objs, int n, an_state state, float gap, const an_anim_opts *opts);
+an_state an_edge_state_at_cursor(const an_obj *edge);
+/* A path through a graph's nodes: node, edge, node, ... each set to `state`, one
+ * step every `gap` seconds; the edges between consecutive nodes are found in the
+ * graph (an_graph_edge_between). A missing edge is reported and skipped; the
+ * nodes are still set. One anim; the list is copied. */
+typedef struct an_path_opts {
+    float gap;             /* seconds between steps; default 0.25 */
+    bool together;         /* every step at once (gap ignored): e.g. a reset */
+    float duration;        /* each object's transition; default 0.3 */
+    an_ease ease;
+} an_path_opts;
+an_anim an_highlight_path(an_obj *const *nodes, int n, an_state state, const an_path_opts *opts);
 
 /* Start at the cursor and move the cursor to the animation's end. */
 an_handle an_play(an_scene *s, an_anim a);

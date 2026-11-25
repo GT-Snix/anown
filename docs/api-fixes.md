@@ -70,6 +70,8 @@ b→a, else NULL. Searched in creation order, so the result is deterministic.
 ```c
 typedef struct an_path_opts {
     float gap;               /* seconds between steps; default 0.25 */
+    bool together;           /* all steps at once (added while implementing: with zero
+                                meaning the default, gap 0 can't say "at once") */
     float duration;          /* each object's transition; default 0.3 */
     an_ease ease;
 } an_path_opts;

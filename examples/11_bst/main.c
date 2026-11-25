@@ -21,9 +21,8 @@
 enum { N = 12 };
 
 static an_scene *S;
-static an_obj *tree;            // a group holding every node and edge (to fade them together)
+static an_obj *tree;            // the graph: it holds every node and edge (one fade for all)
 static an_obj *node[N];         // node[i]: the i-th inserted key
-static an_obj *edge_in[N];      // the edge from node i's parent to node i (none for the root)
 static int key[N], parent[N], side[N], depth[N];
 static int count;
 
@@ -59,12 +58,11 @@ static void insert(int k) {
     snprintf(buf, sizeof buf, "insert %d", k);
     say(buf);
 
-    // walk down from the root, recording the path (node, edge, node, ...)
-    an_obj *path[2 * N];
+    // walk down from the root, recording the path of nodes
+    an_obj *path[N];
     int np = 0, at = 0, d = 0;
     int par = -1, sd = 0;
     while (count > 0) {
-        if (np > 0) path[np++] = edge_in[at];
         path[np++] = node[at];
         par = at;
         sd = k < key[at] ? -1 : 1;
@@ -76,7 +74,7 @@ static void insert(int k) {
         if (next < 0) break;
         at = next;
     }
-    if (np > 0) an_play(S, an_highlight_path(path, np, AN_STATE_ACTIVE, 0.3f, NULL));
+    if (np > 0) an_play(S, an_highlight_path(path, np, AN_STATE_ACTIVE, &(an_path_opts){ .gap = 0.3f }));
 
     key[me] = k;
     parent[me] = par;
@@ -88,19 +86,19 @@ static void insert(int k) {
     an_vec2 pos[N];
     layout(count, pos);
     snprintf(buf, sizeof buf, "%d", k);
-    node[me] = an_node(S, &(an_node_opts){ .parent = tree, .pos = pos[me], .radius = 38, .label = buf });
+    node[me] = an_graph_node(tree, &(an_node_opts){ .pos = pos[me], .radius = 38, .label = buf });
     an_anim glide[N + 1];
     int ng = 0;
     for (int i = 0; i < me; i++) glide[ng++] = an_move_to(node[i], pos[i], &(an_anim_opts){ .duration = 0.6f });
     glide[ng++] = an_pop(node[me], NULL);
     an_par(S, ng, glide);
     if (par >= 0) {
-        edge_in[me] = an_edge(S, &(an_edge_opts){ .parent = tree, .from = node[par], .to = node[me], .z = -1, .undrawn = true });
-        an_play(S, an_draw(edge_in[me], &(an_anim_opts){ .duration = 0.35f }));
+        an_obj *e = an_graph_edge(tree, node[par], node[me], &(an_edge_opts){ .undrawn = true });
+        an_play(S, an_draw(e, &(an_anim_opts){ .duration = 0.35f }));
     }
 
     // back to normal
-    if (np > 0) an_play(S, an_highlight_path(path, np, AN_STATE_BASE, 0, &(an_anim_opts){ .duration = 0.25f }));
+    if (np > 0) an_play(S, an_highlight_path(path, np, AN_STATE_BASE, &(an_path_opts){ .together = true, .duration = 0.25f }));
     an_wait(S, 0.2f);
 }
 
@@ -136,7 +134,7 @@ int main(int argc, char **argv) {
     }
     an_wait(S, 0.6f);
 
-    tree = an_group(S, NULL);
+    tree = an_graph(S, NULL);
     float heights[N], ns[N];
     for (int i = 0; i < N; i++) {
         insert(keys[i]);

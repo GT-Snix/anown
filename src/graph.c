@@ -102,6 +102,12 @@ an_anim an_edge_set_state(an_obj *e, an_state st, const an_anim_opts *opts) {
     return state_anim(e, AN_VERB_EDGE_STATE, st, opts);
 }
 
+an_state an_edge_state_at_cursor(const an_obj *e) {
+    if (!e || e->kind != AN_KIND_EDGE) return AN_STATE_BASE;
+    const ani_value v = ani_sample(ani_obj_prop((an_obj *)e, AN_PROP_STATE), ani_tick_time(e->scene->cursor));
+    return (an_state)(int)v.v[0];
+}
+
 an_state an_node_state_at_cursor(const an_obj *n) {
     if (!n || n->kind != AN_KIND_NODE) return AN_STATE_BASE;
     const ani_value v = ani_sample(ani_obj_prop(n->u.node.shape, AN_PROP_STATE), ani_tick_time(n->scene->cursor));
@@ -138,15 +144,39 @@ int64_t ani_graph_record_state(an_scene *s, const an_anim *a, int64_t start) {
     return record_state(s, a->obj, a->swap_j, &a->opts, start);
 }
 
-an_anim an_highlight_path(an_obj *const *objs, int n, an_state st, float gap, const an_anim_opts *opts) {
-    an_anim x = { .verb = AN_VERB_PATH, .swap_i = n, .swap_j = (int)st, .gap = gap };
-    if (opts) x.opts = *opts;
-    if (!(x.opts.duration > 0.0f)) x.opts.duration = 0.3f;
-    if (!objs || n <= 0 || !objs[0]) return x;
-    an_scene *s = objs[0]->scene;
-    x.objs = ani_arena_alloc(&s->arena, sizeof(an_obj *) * (size_t)n, alignof(an_obj *));
-    if (x.objs) memcpy(x.objs, objs, sizeof(an_obj *) * (size_t)n);
-    x.obj = objs[0]; // the scene comes from it
+an_anim an_highlight_path(an_obj *const *nodes, int n, an_state st, const an_path_opts *opts) {
+    const an_path_opts po = opts ? *opts : (an_path_opts){ 0 };
+    an_anim x = { .verb = AN_VERB_PATH, .swap_j = (int)st, .gap = po.together ? 0.0f : po.gap > 0.0f ? po.gap : 0.25f };
+    x.opts.duration = po.duration > 0.0f ? po.duration : 0.3f;
+    x.opts.ease = po.ease;
+    if (!nodes || n <= 0 || !nodes[0]) return x;
+    const an_obj *g = nodes[0]->parent;
+    if (!g || g->kind != AN_KIND_GRAPH) {
+        fprintf(stderr, "anown: an_highlight_path: the nodes must belong to a graph (an_graph_node)\n");
+        return x;
+    }
+    an_scene *s = nodes[0]->scene;
+    // node, edge, node, ...: at most 2n - 1 objects
+    x.objs = ani_arena_alloc(&s->arena, sizeof(an_obj *) * (size_t)(2 * n - 1), alignof(an_obj *));
+    if (!x.objs) return x;
+    int k = 0;
+    bool reported = false;
+    for (int i = 0; i < n; i++) {
+        if (!nodes[i] || nodes[i]->parent != g) {
+            fprintf(stderr, "anown: an_highlight_path: node %d isn't in the first node's graph; skipped\n", i);
+            continue;
+        }
+        x.objs[k++] = nodes[i];
+        if (i + 1 >= n || !nodes[i + 1]) continue;
+        an_obj *e = an_graph_edge_between(g, nodes[i], nodes[i + 1]);
+        if (e) x.objs[k++] = e;
+        else if (!reported) {
+            fprintf(stderr, "anown: an_highlight_path: no edge between nodes %d and %d; skipped\n", i, i + 1);
+            reported = true;
+        }
+    }
+    x.swap_i = k;
+    x.obj = nodes[0]; // the scene comes from it
     return x;
 }
 
@@ -193,7 +223,7 @@ an_obj *an_edge(an_scene *s, const an_edge_opts *opts) {
     e->u.edge.gap = o.gap > 0.0f ? o.gap : 6.0f;
     e->u.edge.width = c.stroke_width;
     const an_color states[4] = { c.stroke, pal->b, mix(s->background, pal->ink, 0.3f), pal->c };
-    memcpy(e->u.edge.states, states, sizeof states);
+    for (int k = 0; k < 4; k++) e->u.edge.states[k] = o.state_colors[k].a > 0.0f ? o.state_colors[k] : states[k];
     if (o.directed) {
         // the head: a triangle with its tip at the origin pointing along +x; the
         // tessellator visits it with the resolved tip frame as its parent transform
@@ -264,4 +294,89 @@ bool ani_edge_resolve(const an_obj *e, ani_time at, an_vec2 *p0, an_vec2 *p1, an
     const float tx = p1->x - ctrl->x, ty = p1->y - ctrl->y, tl = sqrtf(tx * tx + ty * ty);
     *dir = tl > 0.0f ? (an_vec2){ tx / tl, ty / tl } : (an_vec2){ 1, 0 };
     return true;
+}
+
+// ---- graphs ------------------------------------------------------------------------------
+
+an_obj *an_graph(an_scene *s, const an_graph_opts *opts) {
+    const an_graph_opts o = opts ? *opts : (an_graph_opts){ 0 };
+    if (!s) return NULL;
+    an_obj *g = ani_obj_make(s, AN_KIND_GRAPH, &(ani_common_opts){
+        .name = o.name, .hidden = o.hidden, .parent = o.parent, .pos = o.pos, .scale = o.scale, .rotation = o.rotation,
+        .z = o.z });
+    if (!g) return NULL;
+    g->u.graph.directed = o.directed;
+    memcpy(g->u.graph.states, o.state_colors, sizeof g->u.graph.states);
+    return g;
+}
+
+// grow an arena array by copying (the old block stays in the arena until the scene goes)
+static void *grow(ani_arena *a, void *old, int n, int *cap, size_t elem) {
+    if (n < *cap) return old;
+    const int nc = *cap ? *cap * 2 : 16;
+    void *p = ani_arena_alloc(a, elem * (size_t)nc, 16);
+    if (!p) return NULL;
+    if (old && n) memcpy(p, old, elem * (size_t)n);
+    *cap = nc;
+    return p;
+}
+
+static bool owns(const an_obj *g, const an_obj *n) {
+    for (int i = 0; i < g->u.graph.nn; i++)
+        if (g->u.graph.nodes[i] == n) return true;
+    return false;
+}
+
+an_obj *an_graph_node(an_obj *g, const an_node_opts *opts) {
+    if (!g || g->kind != AN_KIND_GRAPH) return NULL;
+    an_node_opts o = opts ? *opts : (an_node_opts){ 0 };
+    o.parent = g;
+    for (int k = 1; k < 4; k++)
+        if (!(o.state_colors[k].a > 0.0f)) o.state_colors[k] = g->u.graph.states[k];
+    an_obj *n = an_node(g->scene, &o);
+    if (!n) return NULL;
+    an_obj **nodes = grow(&g->scene->arena, g->u.graph.nodes, g->u.graph.nn, &g->u.graph.ncap, sizeof(an_obj *));
+    if (!nodes) return NULL;
+    g->u.graph.nodes = nodes;
+    nodes[g->u.graph.nn++] = n;
+    return n;
+}
+
+an_obj *an_graph_edge(an_obj *g, an_obj *a, an_obj *b, const an_edge_opts *opts) {
+    if (!g || g->kind != AN_KIND_GRAPH) return NULL;
+    if (!a || !b || !owns(g, a) || !owns(g, b)) {
+        fprintf(stderr, "anown: an_graph_edge: both ends must be nodes of this graph (an_graph_node)\n");
+        return NULL;
+    }
+    for (int i = 0; i < g->u.graph.ne; i++)
+        if (g->u.graph.edges[i].a == a && g->u.graph.edges[i].b == b) {
+            fprintf(stderr, "anown: an_graph_edge: that edge already exists; returning it\n");
+            return g->u.graph.edges[i].edge;
+        }
+    an_edge_opts o = opts ? *opts : (an_edge_opts){ 0 };
+    o.parent = g;
+    o.from = a;
+    o.to = b;
+    o.directed = o.directed || g->u.graph.directed;
+    if (o.z == 0) o.z = -1; // under the nodes
+    for (int k = 1; k < 4; k++)
+        if (!(o.state_colors[k].a > 0.0f)) o.state_colors[k] = g->u.graph.states[k];
+    an_obj *e = an_edge(g->scene, &o);
+    if (!e) return NULL;
+    ani_graph_edge *edges = grow(&g->scene->arena, g->u.graph.edges, g->u.graph.ne, &g->u.graph.ecap, sizeof(ani_graph_edge));
+    if (!edges) return NULL;
+    g->u.graph.edges = edges;
+    edges[g->u.graph.ne++] = (ani_graph_edge){ a, b, e };
+    return e;
+}
+
+an_obj *an_graph_edge_between(const an_obj *g, const an_obj *a, const an_obj *b) {
+    if (!g || g->kind != AN_KIND_GRAPH) return NULL;
+    an_obj *back = NULL;
+    for (int i = 0; i < g->u.graph.ne; i++) {
+        const ani_graph_edge *e = &g->u.graph.edges[i];
+        if (e->a == a && e->b == b) return e->edge;
+        if (!back && e->a == b && e->b == a) back = e->edge;
+    }
+    return back;
 }

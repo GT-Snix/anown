@@ -117,6 +117,15 @@ struct an_obj {
             float width;            // the base stroke width (states scale it)
             an_color states[4];
         } edge;
+        // AN_KIND_GRAPH (docs/api-fixes.md): arena arrays, grown by copying
+        struct {
+            an_obj **nodes;
+            int nn, ncap;
+            struct ani_graph_edge *edges;
+            int ne, ecap;
+            bool directed;
+            an_color states[4];
+        } graph;
         // AN_KIND_AXES (docs/graphs.md)
         struct {
             an_vec2 size;
@@ -189,6 +198,8 @@ an_obj *ani_obj_make(an_scene *s, an_kind kind, const ani_common_opts *c);
 // Key a library helper's internal part by a fixed name (and index) under its
 // parent, instead of its child index (docs/explainer.md, "Keys").
 void ani_obj_part(an_obj *o, const char *part, int index);
+typedef struct ani_graph_edge { an_obj *a, *b, *edge; } ani_graph_edge;
+
 // Give a just-made object its path (and whether to outline it); the verb pivot
 // goes to the path's box center (except rects and circles).
 an_obj *ani_obj_with_path(an_obj *o, ani_path *path, bool stroked);

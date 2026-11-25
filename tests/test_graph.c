@@ -146,25 +146,61 @@ static void test_edge_cache(void) {
 
 // ---- nodes and states ----------------------------------------------------------------------------
 
-// States: a node set ACTIVE ends exactly at the palette's accent b (#FF2E88); an
-// edge set ACTIVE at b with width 5 x 1.5 = 7.5. A path highlight of node, edge,
-// node with gap 0.2 s starts the third object's state at 0.4 s: just before, it's
-// BASE; at 0.4 s, ACTIVE. A halftone node has paper_under; a solid one doesn't.
+// States in a graph whose ACTIVE color is #FFD400: a path a -> b -> c (edges a-b and
+// b-c, gap 0.2 s, duration 0.3 s) styles a, edge ab, b, edge bc, c, starting at 0, 0.2,
+// 0.4, 0.6, 0.8 s; the handle ends at 0.8 + 0.3 = 1.1 s. At the end the nodes' fill and
+// the edges' stroke are exactly #FFD400, and the edges are 5 x 1.5 = 7.5 wide.
+// A halftone node has paper_under; a solid one doesn't.
 static void test_states(void) {
     an_scene *s = scene();
-    an_obj *a = an_node(s, &(an_node_opts){ .pos = { 100, 100 } });
-    an_obj *b = an_node(s, &(an_node_opts){ .pos = { 300, 100 }, .pattern = { .kind = AN_PATTERN_HALFTONE } });
-    an_obj *e = an_edge(s, &(an_edge_opts){ .from = a, .to = b });
+    const an_color yel = AN_HEX(0xFFD400);
+    an_obj *g = an_graph(s, &(an_graph_opts){ .state_colors = { [AN_STATE_ACTIVE] = yel } });
+    an_obj *a = an_graph_node(g, &(an_node_opts){ .pos = { 100, 100 } });
+    an_obj *b = an_graph_node(g, &(an_node_opts){ .pos = { 300, 100 }, .pattern = { .kind = AN_PATTERN_HALFTONE } });
+    an_obj *c = an_graph_node(g, &(an_node_opts){ .pos = { 500, 100 } });
+    an_obj *ab = an_graph_edge(g, a, b, NULL), *bc = an_graph_edge(g, b, c, NULL);
     CHECK(b->u.node.shape->paper_under && !a->u.node.shape->paper_under);
-    const an_handle h = an_play(s, an_highlight_path((an_obj *[]){ a, e, b }, 3, AN_STATE_ACTIVE, 0.2f, NULL));
-    CHECK(h.start == 0.0 && h.end == 0.7); // the last object's 0.3 s track starts at 0.4
-    const ani_prop_ref sb = ani_obj_prop(b->u.node.shape, AN_PROP_STATE);
-    CHECK(ani_sample(sb, ani_tick_time(399999)).v[0] == 0.0 && ani_sample(sb, ani_tick_time(400000)).v[0] == 1.0);
-    CHECK(an_node_state_at_cursor(b) == AN_STATE_ACTIVE);
-    const an_color mag = AN_HEX(0xFF2E88);
-    const an_obj_state ns = an_obj_at_cursor(a->u.node.shape), es = an_obj_at_cursor(e);
-    CHECK(ns.fill.r == mag.r && ns.fill.g == mag.g && ns.fill.b == mag.b);
-    CHECK(es.stroke.r == mag.r && es.stroke.g == mag.g && es.stroke_width == 7.5f);
+    const an_handle h = an_play(s, an_highlight_path((an_obj *[]){ a, b, c }, 3, AN_STATE_ACTIVE,
+                                                     &(an_path_opts){ .gap = 0.2f }));
+    CHECK(h.start == 0.0 && h.end == 1.1);
+    an_obj *const order[5] = { a->u.node.shape, ab, b->u.node.shape, bc, c->u.node.shape };
+    for (int k = 0; k < 5; k++) { // each step flips its state at k x 0.2 s exactly
+        const ani_prop_ref r = ani_obj_prop(order[k], AN_PROP_STATE);
+        const int64_t t = (int64_t)k * 200000;
+        CHECK(ani_sample(r, ani_tick_time(t - 1)).v[0] == 0.0 && ani_sample(r, ani_tick_time(t)).v[0] == 1.0);
+    }
+    CHECK(an_node_state_at_cursor(c) == AN_STATE_ACTIVE && an_edge_state_at_cursor(bc) == AN_STATE_ACTIVE);
+    const an_obj_state ns = an_obj_at_cursor(b->u.node.shape), es = an_obj_at_cursor(bc);
+    CHECK(ns.fill.r == yel.r && ns.fill.g == yel.g && ns.fill.b == yel.b);
+    CHECK(es.stroke.r == yel.r && es.stroke.g == yel.g && es.stroke.b == yel.b && es.stroke_width == 7.5f);
+    // a reset all at once: every object flips at the cursor (1.1 s)
+    an_play(s, an_highlight_path((an_obj *[]){ a, b, c }, 3, AN_STATE_BASE, &(an_path_opts){ .together = true }));
+    for (int k = 0; k < 5; k++) {
+        const ani_prop_ref r = ani_obj_prop(order[k], AN_PROP_STATE);
+        CHECK(ani_sample(r, ani_tick_time(1099999)).v[0] == 1.0 && ani_sample(r, ani_tick_time(1100000)).v[0] == 0.0);
+    }
+    an_scene_destroy(s);
+}
+
+// Ownership: the edge list in creation order; edge_between both ways and NULL;
+// a duplicate ordered pair returns the first edge; nodes of another graph are
+// rejected; edges default to z -1 and nodes to z 0 (edges under nodes whatever the
+// creation order); a path with a missing edge styles only the 2 nodes.
+static void test_graph_ownership(void) {
+    an_scene *s = scene();
+    an_obj *g = an_graph(s, NULL), *h = an_graph(s, NULL);
+    an_obj *a = an_graph_node(g, NULL), *b = an_graph_node(g, NULL), *c = an_graph_node(g, NULL);
+    an_obj *x = an_graph_node(h, NULL);
+    an_obj *ab = an_graph_edge(g, a, b, NULL), *cb = an_graph_edge(g, c, b, NULL);
+    CHECK(g->u.graph.ne == 2 && g->u.graph.edges[0].edge == ab && g->u.graph.edges[1].edge == cb);
+    CHECK(an_graph_edge_between(g, a, b) == ab && an_graph_edge_between(g, b, a) == ab);
+    CHECK(an_graph_edge_between(g, b, c) == cb && an_graph_edge_between(g, a, c) == NULL);
+    CHECK(an_graph_edge(g, a, b, NULL) == ab && g->u.graph.ne == 2);
+    CHECK(an_graph_edge(g, a, x, NULL) == NULL);
+    CHECK(ab->z == -1 && a->z == 0 && ab->parent == g && a->parent == g);
+    // a, c have no edge: the path styles a and c only
+    const an_anim p = an_highlight_path((an_obj *[]){ a, c }, 2, AN_STATE_ACTIVE, NULL);
+    CHECK(p.swap_i == 2 && p.objs[0] == a && p.objs[1] == c);
     an_scene_destroy(s);
 }
 
@@ -319,6 +355,7 @@ int main(void) {
     test_edge_pixels();
     test_edge_cache();
     test_states();
+    test_graph_ownership();
     test_layout_tree();
     test_layout_layered();
     test_axes();
