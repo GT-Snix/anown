@@ -25,6 +25,9 @@ static const ani_prop_info g_props[AN_PROP_COUNT] = {
     [AN_PROP_CAMERA_ZOOM] = { 1, ANI_SPACE_LOG, 1e-4 },
     [AN_PROP_CAMERA_ROTATION] = { 1, ANI_SPACE_LINEAR, 1e-4 },
     [AN_PROP_CAMERA_SHAKE] = { 1, ANI_SPACE_STEP, 0.0 }, // events, see an_shake
+    [AN_PROP_VERB_SCALE] = { 2, ANI_SPACE_LINEAR, 1e-4 },
+    [AN_PROP_VERB_ROTATION] = { 1, ANI_SPACE_LINEAR, 1e-4 },
+    [AN_PROP_VERB_PIVOT] = { 2, ANI_SPACE_STEP, 0.0 },
 };
 
 #define SETTLE_RELATIVE 1e-3 // spring tolerance relative to travel distance
@@ -77,6 +80,9 @@ ani_value ani_base_get(ani_prop_ref ref) {
     case AN_PROP_Z: return (ani_value){ { (double)o->z } };
     case AN_PROP_STROKE_WIDTH: return (ani_value){ { o->stroke_width } };
     case AN_PROP_DRAW: return (ani_value){ { o->draw } };
+    case AN_PROP_VERB_SCALE: return (ani_value){ { o->vscale.x, o->vscale.y } };
+    case AN_PROP_VERB_ROTATION: return (ani_value){ { o->vrot } };
+    case AN_PROP_VERB_PIVOT: return (ani_value){ { o->vpivot.x, o->vpivot.y } };
     default: break; // camera properties aren't the object's
     }
     return (ani_value){ { 0 } };
@@ -103,6 +109,9 @@ static void base_set(ani_prop_ref ref, ani_value v) {
     case AN_PROP_Z: o->z = (int)v.v[0]; break;
     case AN_PROP_STROKE_WIDTH: o->stroke_width = (float)v.v[0]; break;
     case AN_PROP_DRAW: o->draw = (float)v.v[0]; break;
+    case AN_PROP_VERB_SCALE: o->vscale = (an_vec2){ (float)v.v[0], (float)v.v[1] }; break;
+    case AN_PROP_VERB_ROTATION: o->vrot = (float)v.v[0]; break;
+    case AN_PROP_VERB_PIVOT: o->vpivot = (an_vec2){ (float)v.v[0], (float)v.v[1] }; break;
     default: break;
     }
 }
@@ -473,6 +482,75 @@ an_vec2 ani_shake_at(const an_scene *s, ani_time at) {
     return (an_vec2){ (float)x, (float)y };
 }
 
+// ---- verbs (docs/camera.md) -------------------------------------------------------------
+
+// Seconds from a spring's start (at rest, d0 != 0) until it first reaches its
+// target: d(t) = d0 e^(-zwt) (cos wd t + (zw / wd) sin wd t) = 0 at
+// t* = (pi - atan(wd / (zw))) / wd. A critically damped spring never crosses: -1.
+double ani_spring_first_arrival(an_ease e) {
+    const ani_spring sp = ani_spring_params(e);
+    if (sp.zeta >= 1.0) return -1.0;
+    const double wd = sp.omega * sqrt(1.0 - sp.zeta * sp.zeta);
+    return (3.14159265358979323846 - atan(wd / (sp.zeta * sp.omega))) / wd;
+}
+
+static int64_t record_verb(an_scene *s, const an_anim *a, int64_t start) {
+    an_obj *o = a->obj;
+    const an_verb_opts *v = &a->verb_opts;
+    // the pivot, as a step at the start: a later default-pivot verb puts the center back
+    const an_vec2 pivot = v->custom_pivot ? v->pivot : o->vpivot; // base: the center
+    ani_record(s, ani_obj_prop(o, AN_PROP_VERB_PIVOT), start, 0, AN_EASE_LINEAR, (ani_value){ { pivot.x, pivot.y } },
+               false, NULL);
+    an_ease ease;
+    ani_value from;
+    float rot_from = 0.0f;
+    switch (a->verb) {
+    case AN_VERB_SLAP: {
+        const double k = v->amount > 0.0f ? v->amount : 2.5;
+        ease = an_spring(0.45f, 0.22f);
+        from = (ani_value){ { k, k } };
+        rot_from = -0.06f;
+        break;
+    }
+    case AN_VERB_POP:
+        ease = an_spring(0.5f, 0.3f);
+        from = (ani_value){ { 0, 0 } };
+        break;
+    default: { // squash and stretch
+        const double k = 1.0 + (v->amount > 0.0f ? v->amount : 0.3);
+        ease = an_spring(0.35f, 0.3f);
+        from = (ani_value){ { k, 1.0 / k } };
+        break;
+    }
+    }
+    const int64_t duration = v->duration > 0.0f ? ani_ticks(v->duration) : -1;
+    const int64_t end = ani_record(s, ani_obj_prop(o, AN_PROP_VERB_SCALE), start, duration, ease, (ani_value){ { 1, 1 } },
+                                   false, &from);
+    if (rot_from != 0.0f) {
+        const ani_value rf = { { rot_from } };
+        ani_record(s, ani_obj_prop(o, AN_PROP_VERB_ROTATION), start, duration, ease, (ani_value){ { 0 } }, false, &rf);
+    }
+    if (a->verb == AN_VERB_SLAP && v->impact_shake > 0.0f) {
+        // impact: the first frame at or after the moment the scale first reaches 1
+        const double tstar = ani_spring_first_arrival(ease);
+        double t_imp = tstar >= 0.0 ? (double)start + tstar * (double)ANI_TICKS_PER_SEC : (double)end;
+        if (t_imp > (double)end) t_imp = (double)end;
+        const int64_t frame = (int64_t)ceil(t_imp * (double)s->fps / (double)ANI_TICKS_PER_SEC - 1e-9);
+        const int64_t tick = frame * ANI_TICKS_PER_SEC / s->fps; // floor: reached at that frame, not before
+        record_shake(s, tick, v->impact_shake_duration > 0.0f ? v->impact_shake_duration : 0.5f, v->impact_shake);
+    }
+    return end;
+}
+
+static an_anim verb(an_obj *o, an_verb_kind k, const an_verb_opts *opts) {
+    an_anim a = { .obj = o, .verb = k };
+    if (opts) a.verb_opts = *opts;
+    return a;
+}
+an_anim an_slap(an_obj *o, const an_verb_opts *opts) { return verb(o, AN_VERB_SLAP, opts); }
+an_anim an_pop(an_obj *o, const an_verb_opts *opts) { return verb(o, AN_VERB_POP, opts); }
+an_anim an_squash_stretch(an_obj *o, const an_verb_opts *opts) { return verb(o, AN_VERB_SQUASH, opts); }
+
 // Record `a` starting at `start`; returns its end (or start if it can't run).
 static int64_t record_anim(an_scene *s, const an_anim *a, int64_t start) {
     if (!s) return start;
@@ -491,6 +569,7 @@ static int64_t record_anim(an_scene *s, const an_anim *a, int64_t start) {
     }
     if (!ani_prop_valid(ref.kind, a->prop)) return start;
     if (a->prop == AN_PROP_CAMERA_SHAKE) return record_shake(s, start, a->opts.duration > 0.0f ? a->opts.duration : 0.5f, a->value[0]);
+    if (a->verb != AN_VERB_NONE && a->obj) return record_verb(s, a, start);
     const bool spring = a->opts.ease.kind == AN_EASE_KIND_SPRING;
     int64_t duration = ani_ticks(a->opts.duration);
     if (duration == 0) duration = spring ? -1 : ANI_TICKS_PER_SEC;
@@ -621,7 +700,8 @@ double ani_obj_area_scale_at(an_obj *o, ani_time at) {
     det *= det;
     for (an_obj *p = o; p && p->parent; p = p->parent) {
         const ani_value sc = ani_sample(ani_obj_prop(p, AN_PROP_SCALE), at);
-        det *= sc.v[0] * sc.v[1];
+        const ani_value vs = ani_sample(ani_obj_prop(p, AN_PROP_VERB_SCALE), at);
+        det *= sc.v[0] * sc.v[1] * vs.v[0] * vs.v[1];
     }
     return sqrt(fabs(det));
 }

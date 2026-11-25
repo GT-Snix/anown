@@ -1,6 +1,7 @@
 #include "scene_internal.h"
 #include "rng_internal.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -130,6 +131,7 @@ an_obj *ani_obj_make(an_scene *s, an_kind kind, const ani_common_opts *c) {
     o->stroke_width = c->stroke_width > 0.0f ? c->stroke_width : 4.0f;
     o->draw = c->undrawn ? 0.0f : 1.0f;
     o->chaos = 1.0f;
+    o->vscale = (an_vec2){ 1, 1 };
     o->no_fill = c->no_fill;
     o->riso = c->riso;
     o->shadow = c->shadow;
@@ -163,6 +165,18 @@ static an_obj *with_path(an_obj *o, ani_path *path, bool stroked) {
     if (o) {
         o->path = path;
         o->has_stroke = stroked;
+        // the verb pivot: the center of the path's bounding box (rects and circles
+        // are centered on their origin, so it's (0, 0) for them)
+        if (path && path->npts > 0 && o->kind != AN_KIND_RECT && o->kind != AN_KIND_CIRCLE) {
+            float x0 = path->pts[0].x, x1 = x0, y0 = path->pts[0].y, y1 = y0;
+            for (int i = 1; i < path->npts; i++) {
+                x0 = fminf(x0, path->pts[i].x);
+                x1 = fmaxf(x1, path->pts[i].x);
+                y0 = fminf(y0, path->pts[i].y);
+                y1 = fmaxf(y1, path->pts[i].y);
+            }
+            o->vpivot = (an_vec2){ (x0 + x1) * 0.5f, (y0 + y1) * 0.5f };
+        }
     }
     return o;
 }

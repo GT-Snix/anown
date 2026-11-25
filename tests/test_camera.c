@@ -219,6 +219,124 @@ static void test_shake(void) {
     an_scene_destroy(s);
 }
 
+// ---- verbs ---------------------------------------------------------------------------------
+
+// A 100x60 rect at (480, 270), blue, chaos 0 (no boil, no riso, no shadow).
+//   last frame: verb scale {1, 1} and rotation 0 exactly; the frame is
+//     byte-identical to the same scene without the slap
+//   frame 0: 2.5x and tilted -0.06 rad: 250x150 about the center. A line through
+//     the center meets an edge of a rotated rect at half-size / cos(0.06): 125.225
+//     across, 75.135 down. So x 356 (124 left) is inside, 353 (127 left) outside;
+//     y 196 (74 up) inside, 193 outside. Unslapped, x 356 would be paper.
+//   impact: the spring (0.45, 0.22 s) first reaches 1 at t* = 0.0799 s, frame
+//     ceil(4.79) = 5: verb scale > 1 at frame 4, < 1 at frame 5; the impact shake
+//     (10 px) is exactly 0 at frame 4 and moves the camera at frame 5
+static void test_slap(void) {
+    const size_t bytes = (size_t)W * H * 4;
+    unsigned char *plain = malloc(bytes);
+    an_scene *s0 = scene(false);
+    an_set_chaos(s0, 0.0f);
+    an_rect(s0, &(an_rect_opts){ .pos = { 480, 270 }, .size = { 100, 60 }, .fill = AN_HEX(0x0078BF) });
+    an_scene *s = scene(false);
+    an_set_chaos(s, 0.0f);
+    an_obj *r = an_rect(s, &(an_rect_opts){ .pos = { 480, 270 }, .size = { 100, 60 }, .fill = AN_HEX(0x0078BF) });
+    an_play(s, an_slap(r, &(an_verb_opts){ .impact_shake = 10.0f }));
+    const int64_t last = an_scene_length(s);
+    an_seek(s, last);
+    // (the shake outlasts the slap; the verb's own last frame is its track end)
+    an_wait(s0, (float)last / 60.0f);
+    render(s0, last);
+    memcpy(plain, g_px, bytes);
+    an_seek(s, last);
+    CHECK(r->ch[AN_PROP_VERB_SCALE] != NULL);
+    const ani_value vs = ani_sample(ani_obj_prop(r, AN_PROP_VERB_SCALE), ani_frame_time(s, last));
+    const ani_value vr = ani_sample(ani_obj_prop(r, AN_PROP_VERB_ROTATION), ani_frame_time(s, last));
+    CHECK(vs.v[0] == 1.0 && vs.v[1] == 1.0 && vr.v[0] == 0.0);
+    render(s, last);
+    CHECK(memcmp(plain, g_px, bytes) == 0);
+    render(s, 0);
+    CHECK(BLUE(356, 270) && PAPER(353, 270) && BLUE(480, 196) && PAPER(480, 193));
+    // the tilt, near the corners: pixel centers taken back into the rect's frame by
+    // rotating +0.06 about the center. (352.5, 205.5) -> (-123.40, -72.03): inside
+    // (|x| <= 125, |y| <= 75), though untilted x = -127.5 would be outside;
+    // (603.5, 200.5) -> x = 127.44: outside, though untilted (123.5, -69.5) is inside
+    CHECK(BLUE(352, 205) && PAPER(603, 200));
+    render(s0, 0);
+    CHECK(PAPER(356, 270));
+    // impact
+    const double v4 = ani_sample(ani_obj_prop(r, AN_PROP_VERB_SCALE), ani_frame_time(s, 4)).v[0];
+    const double v5 = ani_sample(ani_obj_prop(r, AN_PROP_VERB_SCALE), ani_frame_time(s, 5)).v[0];
+    CHECK(v4 > 1.0 && v5 < 1.0);
+    CHECK_NEAR(ani_spring_first_arrival(an_spring(0.45f, 0.22f)), 0.0799, 1e-4);
+    an_seek(s, 4);
+    CHECK(an_camera_get(s).shake.x == 0.0f && an_camera_get(s).shake.y == 0.0f);
+    an_seek(s, 5);
+    CHECK(an_camera_get(s).shake.x != 0.0f || an_camera_get(s).shake.y != 0.0f);
+    free(plain);
+    an_scene_destroy(s);
+    an_scene_destroy(s0);
+}
+
+// Squash and stretch, a = 0.3: frame 0 is scale {1.3, 1 / 1.3}, det 1. An outline
+// only (no fill), ink width 6: the left edge moves to x = 480 - 50 x 1.3 = 415, the
+// band is 412..418 and stays 6 px wide (ink follows sqrt |det| = 1): columns
+// 412..417 charcoal, 411 and 418 paper.
+static void test_squash(void) {
+    an_scene *s = scene(false);
+    an_set_chaos(s, 0.0f);
+    an_obj *r = an_rect(s, &(an_rect_opts){ .pos = { 480, 270 }, .size = { 100, 60 }, .no_fill = true,
+                                            .stroke = AN_HEX(0x16161A), .stroke_width = 6 });
+    an_play(s, an_squash_stretch(r, NULL));
+    render(s, 0);
+    CHECK(PAPER(411, 270) && CHARCOAL(412, 270) && CHARCOAL(417, 270) && PAPER(418, 270));
+    an_scene_destroy(s);
+}
+
+// A custom pivot stays put: a slap about the rect's top-left corner (-50, -30)
+// keeps that corner at (430, 240) on screen at every frame (the local transform
+// maps the pivot to the same point with or without the verb).
+static void test_pivot(void) {
+    an_scene *s = scene(false);
+    an_set_chaos(s, 0.0f);
+    an_obj *r = an_rect(s, &(an_rect_opts){ .pos = { 480, 270 }, .size = { 100, 60 }, .fill = AN_HEX(0x0078BF) });
+    an_play(s, an_slap(r, &(an_verb_opts){ .pivot = { -50, -30 }, .custom_pivot = true }));
+    const an_vec2 piv = { -50, -30 };
+    int moved = 0;
+    for (int64_t f = 0; f <= an_scene_length(s); f++) {
+        const ani_time t = ani_frame_time(s, f);
+        const ani_value vs = ani_sample(ani_obj_prop(r, AN_PROP_VERB_SCALE), t);
+        const ani_value vr = ani_sample(ani_obj_prop(r, AN_PROP_VERB_ROTATION), t);
+        const ani_value vp = ani_sample(ani_obj_prop(r, AN_PROP_VERB_PIVOT), t);
+        CHECK(vp.v[0] == -50.0 && vp.v[1] == -30.0);
+        const ani_affine l = ani_verb_local(ani_local((an_vec2){ 480, 270 }, (an_vec2){ 1, 1 }, 0.0f),
+                                            (an_vec2){ (float)vs.v[0], (float)vs.v[1] }, (float)vr.v[0], piv);
+        const an_vec2 c = ani_affine_apply(l, piv);
+        moved += fabsf(c.x - 430.0f) > 1e-3f || fabsf(c.y - 240.0f) > 1e-3f;
+    }
+    CHECK(moved == 0);
+    // frame 0 (2.5x, growing down-right from the corner): just inside the corner is
+    // fill, just outside it is paper; the rect's own center region far right is fill
+    render(s, 0);
+    CHECK(BLUE(433, 243) && PAPER(427, 237) && BLUE(650, 300));
+    an_scene_destroy(s);
+}
+
+// The text size factor ignores verbs: Archivo Black at 28 px (stem 6.188, factor
+// min(0.6376, 0.3 x 6.188 / 3) = 0.6188), slapped from 2.5x, keeps 0.6188 at the
+// first, a middle and the last frame (at 2.5x it would be 1).
+static void test_slap_text_chaos(void) {
+    an_scene *s = an_scene_create(&(an_scene_desc){ .width = W, .height = H, .fps = 60 });
+    an_obj *t = an_text(s, &(an_text_opts){ .text = "x", .size = 28, .pos = { 480, 270 } });
+    an_play(s, an_slap(an_text_glyph(t, 0), NULL));
+    const int64_t L = an_scene_length(s);
+    const int64_t frames[3] = { 0, L / 2, L };
+    for (int i = 0; i < 3; i++) {
+        an_seek(s, frames[i]);
+        CHECK_NEAR(an_obj_chaos(an_text_glyph(t, 0)), 0.6188, 1e-4);
+    }
+    an_scene_destroy(s);
+}
+
 int main(void) {
     if (!ani_gfx_setup_headless()) {
         fprintf(stderr, "test_camera: headless Metal setup failed\n");
@@ -233,6 +351,10 @@ int main(void) {
     test_zoom_code();
     test_boil_coarse();
     test_shake();
+    test_slap();
+    test_squash();
+    test_pivot();
+    test_slap_text_chaos();
 
     free(g_px);
     ani_renderer_shutdown(&g_r);

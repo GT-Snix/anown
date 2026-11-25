@@ -5,14 +5,19 @@
 
 #include <math.h>
 
-// World transform at `at`: sampled local transforms from the top level down.
+// World transform at `at`: sampled local transforms (verb transform included)
+// from the top level down. In world coordinates: the camera isn't applied.
 static ani_affine world_at(an_obj *o, ani_time at) {
     if (!o->parent) return (ani_affine){ 1, 0, 0, 1, 0, 0 };
     const ani_value pos = ani_sample(ani_obj_prop(o, AN_PROP_POS), at);
     const ani_value sc = ani_sample(ani_obj_prop(o, AN_PROP_SCALE), at);
     const ani_value rot = ani_sample(ani_obj_prop(o, AN_PROP_ROTATION), at);
-    const ani_affine local = ani_local((an_vec2){ (float)pos.v[0], (float)pos.v[1] },
-                                       (an_vec2){ (float)sc.v[0], (float)sc.v[1] }, (float)rot.v[0]);
+    const ani_value vs = ani_sample(ani_obj_prop(o, AN_PROP_VERB_SCALE), at);
+    const ani_value vr = ani_sample(ani_obj_prop(o, AN_PROP_VERB_ROTATION), at);
+    const ani_value vp = ani_sample(ani_obj_prop(o, AN_PROP_VERB_PIVOT), at);
+    const ani_affine local = ani_verb_local(
+        ani_local((an_vec2){ (float)pos.v[0], (float)pos.v[1] }, (an_vec2){ (float)sc.v[0], (float)sc.v[1] }, (float)rot.v[0]),
+        (an_vec2){ (float)vs.v[0], (float)vs.v[1] }, (float)vr.v[0], (an_vec2){ (float)vp.v[0], (float)vp.v[1] });
     return ani_affine_mul(world_at(o->parent, at), local);
 }
 

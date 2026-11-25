@@ -80,6 +80,9 @@ an_vec2 ani_shake_at(const an_scene *s, ani_time at);
 // An object's area scale on screen at a time: camera zoom x sqrt |det| of its
 // and its ancestors' scales (verb scales included once verbs exist).
 double ani_obj_area_scale_at(an_obj *o, ani_time at);
+// Seconds from a spring's start (at rest) until it first reaches its target;
+// -1 for a critically damped spring (docs/camera.md, the slap's impact).
+double ani_spring_first_arrival(an_ease e);
 double ani_obj_chaos_at(an_obj *o, ani_time at);
 
 typedef struct ani_track {

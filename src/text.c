@@ -226,6 +226,15 @@ static an_obj *make_text(an_scene *s, const ani_common_opts *node, const char *s
         arc += path->total;
         glyphs[gi_out++] = o;
     }
+    // the verb pivot: the center of the block (advance widths x ascent to descent)
+    float bx0 = 0.0f, bx1 = 0.0f;
+    for (int l = 0; l < L.nlines; l++) {
+        const float lw = L.line_w[l];
+        const float ax = tp->align == AN_ALIGN_CENTER ? -lw * 0.5f : tp->align == AN_ALIGN_RIGHT ? -lw : 0.0f;
+        if (l == 0 || ax < bx0) bx0 = ax;
+        if (l == 0 || ax + lw > bx1) bx1 = ax + lw;
+    }
+    t->vpivot = (an_vec2){ (bx0 + bx1) * 0.5f, ((y0 - asc) + (y0 + last - desc)) * 0.5f };
     t->u.text.glyphs = glyphs;
     t->u.text.nglyphs = gi_out;
     t->u.text.total_arc = arc;

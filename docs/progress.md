@@ -767,3 +767,31 @@ order; exactly {0, 0} before the trigger and from the end of the decay on;
 frame 21 recomputed by hand from the formula; the rest frame byte-identical to
 frame 0. test_memo's shapes scene shakes twice (overlapping) while panning:
 cache on == off in all orders.
+
+## Camera, step 3: verbs (2026-11-25)
+
+The verb transform (scale vec2, rotation, pivot defaulting to the object's
+center: bounding-box center for paths, the block center for text) and three
+verbs as `an_anim`s: `an_slap` (2.5x and a -0.06 rad tilt to identity, spring
+0.45 / 0.22 s), `an_pop` (0 to 1, spring 0.5 / 0.3 s, 16% overshoot),
+`an_squash_stretch` ({1.3, 1/1.3} to identity, spring 0.35 / 0.3 s). The slap's
+impact frame is computed analytically (t* = 0.0799 s: frame 5 at 60 fps) and
+`.impact_shake` records a camera shake there. A verb at identity skips its
+matrix entirely, so a finished verb is bit-identical to none. The text size
+factor and riso scale use the scale without verbs; the nozzle includes verbs.
+Tests (test_camera): last frame byte-identical to no slap; frame 0 at 2.5x and
+tilted, by hand at the center lines and near two corners; impact frame and the
+shake starting exactly there; a det-1 squash keeps a 6 px ink band; a custom
+pivot stays fixed every frame; a slapped 28 px Archivo letter keeps chaos
+0.6188. Breaking the impact frame (floor) or dropping the verb rotation fails
+them.
+
+`examples/09_camera`: a title slapped in letter by letter with an impact shake,
+a node popping in and others squash-stretching, a camera pan and 2.5x zoom
+onto a node and back, a final slap with a bigger shake. `out/camera.mp4`: 555
+frames (9.25 s, 1080p60, share mode: static grain, CRF 18), 5.5 MB, 4.8 Mbps,
+exported in 6.3 s wall (1.46x realtime; 25.3 s CPU including ffmpeg).
+`out/camera_frames/` (111 PNGs, every 5th frame). Re-rendered frames
+byte-identical. 18 test programs pass; reference PNGs byte-identical. Clean
+build 4.92 s: at the 5 s budget, so the next addition should look at build time
+first.

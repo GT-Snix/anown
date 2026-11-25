@@ -56,6 +56,13 @@ ani_affine ani_local(an_vec2 pos, an_vec2 scale, float rotation) {
     };
 }
 
+ani_affine ani_verb_local(ani_affine local, an_vec2 vscale, float vrot, an_vec2 pivot) {
+    if (vscale.x == 1.0f && vscale.y == 1.0f && vrot == 0.0f) return local; // exactly: no verb
+    // local . translate(pivot) . rotate(vrot) . scale(vscale) . translate(-pivot)
+    const ani_affine v = ani_affine_mul(ani_local(pivot, vscale, vrot), (ani_affine){ 1, 0, 0, 1, -pivot.x, -pivot.y });
+    return ani_affine_mul(local, v);
+}
+
 ani_affine ani_obj_local(const an_obj *o) {
     return ani_local(o->pos, o->scale, o->rotation);
 }
@@ -492,18 +499,21 @@ typedef struct glyph_item {
 
 // One letter at `at`: size factor on chaos, snapping, style, draw progress.
 // Returns the effective chaos (for its children).
-static float sample_glyph(ani_mesh *m, const an_scene *s, an_obj *c, ani_affine pw, ani_affine w, an_vec2 scale,
-                          float rot, float chaos, ani_time at, glyph_item *g) {
+// rest: the letter's area scale on screen without verbs (the size factor's and
+// the riso scale's input); plain: its own transform is a pure translation
+static float sample_glyph(ani_mesh *m, const an_scene *s, an_obj *c, ani_affine pw, ani_affine w, float rest,
+                          bool plain, float chaos, ani_time at, glyph_item *g) {
     const an_style *sty = &s->style;
-    const float wscale = sqrtf(fabsf(w.a * w.d - w.b * w.c));
-    chaos *= ani_text_size_factor(c, wscale, sty->boil_off ? 0.0f : sty->boil);
+    const float wscale = sqrtf(fabsf(w.a * w.d - w.b * w.c)); // with verbs: the ink's scale
+    chaos *= ani_text_size_factor(c, rest, sty->boil_off ? 0.0f : sty->boil);
     an_obj *text = c->u.glyph.text;
     const bool in_text = c->parent == text;
     // calm letters sit on whole pixels relative to the text's origin
-    if (chaos == 0.0f && in_text && ani_text_snap(pw, &w, c->u.glyph.pen, rot, scale)) m->snapped_letters++;
+    if (chaos == 0.0f && in_text && plain && ani_text_snap(pw, &w, c->u.glyph.pen, 0.0f, (an_vec2){ 1, 1 }))
+        m->snapped_letters++;
     *g = (glyph_item){ .o = c, .w = w, .pw = in_text ? pw : w };
     emit_style st = sample_style(s, c, chaos, at);
-    const float rs = ani_text_riso_scale(c, wscale);
+    const float rs = ani_text_riso_scale(c, rest);
     st.riso = (an_vec2){ st.riso.x * rs, st.riso.y * rs };
     // draw progress: the text's, spread over its letters, and the letter's own
     const float D = (float)ani_sample(ani_obj_prop(text, AN_PROP_DRAW), at).v[0];
@@ -1066,8 +1076,10 @@ static bool flush_glyphs(ani_mesh *m, const an_scene *s, int base, int target) {
 }
 
 // pchaos: effective chaos of the parent (scene dial x multipliers down the tree)
+// prest: the parent's area scale on screen without verbs (camera zoom x scales):
+// the text size factor's "rest" scale (docs/camera.md, (d))
 static bool visit_children(ani_mesh *m, const an_scene *s, const an_obj *parent, ani_affine pw, int target,
-                           float pchaos, ani_time at) {
+                           float pchaos, float prest, ani_time at) {
     // push this node's live children (with their z at the frame), sort that slice
     const int base = m->scratch_count;
     for (an_obj *c = parent->first_child; c; c = c->next_sibling) {
@@ -1092,8 +1104,17 @@ static bool visit_children(ani_mesh *m, const an_scene *s, const an_obj *parent,
         const ani_value sc = ani_sample(ani_obj_prop(c, AN_PROP_SCALE), at);
         const ani_value rot = ani_sample(ani_obj_prop(c, AN_PROP_ROTATION), at);
         const an_vec2 scale = { (float)sc.v[0], (float)sc.v[1] };
-        const ani_affine w = ani_affine_mul(
-            pw, ani_local((an_vec2){ (float)pos.v[0], (float)pos.v[1] }, scale, (float)rot.v[0]));
+        const ani_value vs = ani_sample(ani_obj_prop(c, AN_PROP_VERB_SCALE), at);
+        const ani_value vr = ani_sample(ani_obj_prop(c, AN_PROP_VERB_ROTATION), at);
+        const an_vec2 vscale = { (float)vs.v[0], (float)vs.v[1] };
+        const bool verb = !(vscale.x == 1.0f && vscale.y == 1.0f && vr.v[0] == 0.0);
+        ani_affine local = ani_local((an_vec2){ (float)pos.v[0], (float)pos.v[1] }, scale, (float)rot.v[0]);
+        if (verb) {
+            const ani_value vp = ani_sample(ani_obj_prop(c, AN_PROP_VERB_PIVOT), at);
+            local = ani_verb_local(local, vscale, (float)vr.v[0], (an_vec2){ (float)vp.v[0], (float)vp.v[1] });
+        }
+        const ani_affine w = ani_affine_mul(pw, local);
+        const float rest = prest * sqrtf(fabsf(scale.x * scale.y));
         if (c->path) { // drawn: its largest scale on screen (max_zoom, docs/camera.md)
             const float sq = w.a * w.a + w.b * w.b + w.c * w.c + w.d * w.d, det = w.a * w.d - w.b * w.c;
             const float sv = sqrtf(0.5f * (sq + sqrtf(fmaxf(sq * sq - 4.0f * det * det, 0.0f))));
@@ -1101,7 +1122,7 @@ static bool visit_children(ani_mesh *m, const an_scene *s, const an_obj *parent,
         }
         if (c->kind == AN_KIND_GLYPH) {
             glyph_item g;
-            chaos = sample_glyph(m, s, c, pw, w, scale, (float)rot.v[0], chaos, at, &g);
+            chaos = sample_glyph(m, s, c, pw, w, rest, !verb && rot.v[0] == 0.0 && scale.x == 1.0f && scale.y == 1.0f, chaos, at, &g);
             // a letter fading on its own gets its own layer; outside a layer, so does
             // a translucent one that isn't in its text (a text isolates as a whole)
             const bool tr = (g.fill_on && g.st.fill.a < 1.0f) || (g.ink_on && g.st.stroke.a < 1.0f) ||
@@ -1111,14 +1132,14 @@ static bool visit_children(ani_mesh *m, const an_scene *s, const an_obj *parent,
                 if (!flush_glyphs(m, s, gbase, target)) return false;
                 const int t = layer_new(m, target, opacity, c);
                 if (t < 0 || !emit_glyphs_memo(m, s, &g, 1, t)) return false;
-                if (c->first_child && !visit_children(m, s, c, g.w, t, chaos, at)) return false;
+                if (c->first_child && !visit_children(m, s, c, g.w, t, chaos, rest, at)) return false;
                 continue;
             }
             if (!grow(&m->glyphs, &m->glyph_cap, m->glyph_count + 1, sizeof(glyph_item))) return false;
             ((glyph_item *)m->glyphs)[m->glyph_count++] = g;
             if (c->first_child) {
                 if (!flush_glyphs(m, s, gbase, target)) return false;
-                if (!visit_children(m, s, c, g.w, target, chaos, at)) return false;
+                if (!visit_children(m, s, c, g.w, target, chaos, rest, at)) return false;
             }
             continue;
         }
@@ -1141,7 +1162,7 @@ static bool visit_children(ani_mesh *m, const an_scene *s, const an_obj *parent,
             if (t < 0) return false;
         }
         if (drawable && !emit_memo(m, s, c, w, &st, t)) return false;
-        if (c->first_child && !visit_children(m, s, c, w, t, chaos, at)) return false;
+        if (c->first_child && !visit_children(m, s, c, w, t, chaos, rest, at)) return false;
     }
     if (!flush_glyphs(m, s, gbase, target)) return false;
     m->scratch_count = base;
@@ -1188,7 +1209,7 @@ bool ani_tess_scene(ani_mesh *m, const an_scene *s, int64_t frame) {
         if (!m->memo) return false;
     }
     if (m->memo) m->memo->stamp++;
-    if (!visit_children(m, s, &s->root, root, ANI_TARGET_MAIN, chaos, at)) return false;
+    if (!visit_children(m, s, &s->root, root, ANI_TARGET_MAIN, chaos, cam.zoom, at)) return false;
     merge_runs(m);
     return true;
 }

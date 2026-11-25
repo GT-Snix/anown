@@ -1,6 +1,6 @@
 # Camera and the first verbs (7A): design
 
-Status: decided 2026-11-25 (the review's answers are folded in below). Scope: a
+Status: implemented 2026-11-25 (decisions from the review folded in). Scope: a
 2D camera (position, zoom, rotation) as properties of the scene target, a verb
 transform with three stateless verbs (`an_slap`, `an_pop`, `an_squash_stretch`),
 and `an_shake`. Nothing else from 7.

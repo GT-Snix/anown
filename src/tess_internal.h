@@ -140,6 +140,9 @@ bool ani_mesh_reserve(ani_mesh *m, int verts, int cmds);
 
 // Local transform from a position, scale and rotation (translate * rotate * scale).
 ani_affine ani_local(an_vec2 pos, an_vec2 scale, float rotation);
+// The verb transform (docs/camera.md) applied inside a local transform, about
+// its pivot. Exactly `local` when the verb is the identity.
+ani_affine ani_verb_local(ani_affine local, an_vec2 vscale, float vrot, an_vec2 pivot);
 // Local transform of an object's BASE state.
 ani_affine ani_obj_local(const an_obj *o);
 ani_affine ani_affine_mul(ani_affine parent, ani_affine child);

@@ -44,6 +44,9 @@ struct an_obj {
     // letters: properties set on the letter itself (base writes), by bit
     // (1 << an_prop). Those no longer follow the text (docs/text.md).
     uint32_t own_base;
+    // the verb transform's BASE state (docs/camera.md)
+    an_vec2 vscale, vpivot; // vpivot: the object's center, set at creation
+    float vrot;
 
     // tracks per animatable property; NULL until the first track
     ani_channel *ch[AN_PROP_COUNT];

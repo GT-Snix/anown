@@ -429,6 +429,11 @@ typedef enum an_prop {
     AN_PROP_CAMERA_ZOOM,     /* screen px per world px; default 1; interpolated in log space */
     AN_PROP_CAMERA_ROTATION, /* radians; turning the camera clockwise turns the world counter-clockwise */
     AN_PROP_CAMERA_SHAKE,    /* shake events (an_shake); not a sampled value */
+    /* objects: the verb transform (docs/camera.md), applied about the verb pivot
+       inside the object's own transform; verbs animate it */
+    AN_PROP_VERB_SCALE,      /* vec2, default {1, 1} */
+    AN_PROP_VERB_ROTATION,   /* radians, default 0 */
+    AN_PROP_VERB_PIVOT,      /* local units, step; default the object's center */
     AN_PROP_COUNT
 } an_prop;
 
@@ -454,6 +459,19 @@ typedef struct an_anim_opts {
 } an_anim_opts;
 
 /* A description of an animation; nothing happens until it's played. */
+/* Verbs (docs/camera.md): one-shot springs on the verb transform. Zero fields
+ * take the defaults. */
+typedef struct an_verb_opts {
+    float duration;        /* 0: the spring's settle time */
+    float amount;          /* slap: start scale (2.5); squash: a in {1 + a, 1 / (1 + a)} (0.3) */
+    an_vec2 pivot;         /* with custom_pivot: local units; default the object's center */
+    bool custom_pivot;
+    float impact_shake;    /* an_slap: camera shake intensity (screen px) at impact; 0: none */
+    float impact_shake_duration; /* 0: 0.5 s */
+} an_verb_opts;
+
+typedef enum an_verb_kind { AN_VERB_NONE = 0, AN_VERB_SLAP, AN_VERB_POP, AN_VERB_SQUASH } an_verb_kind;
+
 typedef struct an_anim {
     an_obj *obj;
     an_scene *scene;  /* for scene-target anims (obj is NULL) */
@@ -463,6 +481,8 @@ typedef struct an_anim {
     float value[4];
     float from[4];
     an_anim_opts opts;
+    an_verb_kind verb;     /* a verb: records its own tracks (and impact shake) */
+    an_verb_opts verb_opts;
 } an_anim;
 
 an_anim an_move_to(an_obj *o, an_vec2 to, const an_anim_opts *opts);
@@ -505,6 +525,17 @@ an_camera_state an_camera_get(const an_scene *s);
  * duration; default 0.5 s), smooth 15 Hz noise. A pure function of the frame;
  * the camera is exactly at rest from the end of the decay (docs/camera.md). */
 an_anim an_shake(an_scene *s, float intensity, const an_anim_opts *opts);
+
+/* Verbs: stateless, ordinary tracks with explicit starts; each ends exactly at
+ * the identity, so its last frame is the object's base state.
+ *   an_slap: scale from 2.5x (amount) to 1 and a -0.06 rad tilt to 0, spring
+ *            (damping 0.45, response 0.22 s). Impact = the first frame the scale
+ *            reaches 1 (analytic); .impact_shake shakes the camera from that frame.
+ *   an_pop:  scale from 0 to 1, spring (0.5, 0.3 s): overshoots 16%.
+ *   an_squash_stretch: scale from {1 + a, 1 / (1 + a)} to 1, spring (0.35, 0.3 s). */
+an_anim an_slap(an_obj *o, const an_verb_opts *opts);
+an_anim an_pop(an_obj *o, const an_verb_opts *opts);
+an_anim an_squash_stretch(an_obj *o, const an_verb_opts *opts);
 
 /* Start at the cursor and move the cursor to the animation's end. */
 void an_play(an_scene *s, an_anim a);
