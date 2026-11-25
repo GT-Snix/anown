@@ -227,7 +227,9 @@ typedef enum an_anchor {
  * letter's advance at half the x-height.
  * Letters take fill, stroke, stroke_width, pattern, riso, shadow and
  * paper_under from these opts; the outline is drawn only if stroke or
- * stroke_width is given (as for rects). A text draws as one object: all its
+ * stroke_width is given (as for rects). Setting or animating the text's fill,
+ * stroke or stroke width changes every letter that hasn't been given its own
+ * (by a setter or an anim on the letter); opacity multiplies down the tree. A text draws as one object: all its
  * shadows, then all fills, then all outlines.
  * an_draw(text) draws the outlines on letter by letter, each letter's fill
  * appearing when its outline closes; without an outline it reveals whole

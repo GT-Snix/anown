@@ -423,6 +423,8 @@ left open:
 - **Typewriter** (no outline): letter k shows when draw progress x letters >= k + 1.
   With an outline, progress runs by arc length and the fill pops in when the
   letter's outline is complete.
+- **Letters follow the text's paint** (fill, stroke, stroke width) until
+  overridden: see "Text-level paint and the letters" below.
 - **Opts.** `an_text_opts` has `.letters_hidden` and `.letters_undrawn` (start
   every letter at opacity 0 / draw 0, for per-letter stagger) and `.size_chaos`.
   `an_code_text(code, n)` returns a line's text. In a code block, the box is at
@@ -449,3 +451,31 @@ Measured:
 - **Overlapping contours in the fonts:** not scanned for. The overlap test
   stacks two letters in one batch instead, which reaches the same code (winding
   2 must fill) and doesn't depend on what the fonts happen to contain.
+
+## Text-level paint and the letters (2026-11-25)
+
+A text's **fill, stroke and stroke width** reach its letters: setters and
+animations on the text (`an_obj_set_fill(text, ...)`, `an_fill_to(text, ...)`,
+`an_stroke_to`, `an_stroke_width_to`) change every letter that hasn't been
+overridden.
+
+- **How:** sampling a letter's property that still follows samples the text's
+  instead (src/timeline.c, `follows_text`). Nothing is copied into the letters,
+  so seeking stays order-independent.
+- **Overridden** means: from the start of the letter's own first track on that
+  property, or for good once a setter wrote the letter's value at its creation
+  (a base write). Before its own track starts, a letter still follows.
+- **No jump on take-over.** A letter's first track starts from the text's value
+  at that moment (and, for springs, its velocity), not from the letter's stale
+  creation value.
+- Only these three properties. Position, scale, rotation and draw progress
+  compose through the tree instead (a letter's pos is relative to the text).
+- **Opacity multiplies**, as for any child: the text's opacity fades the whole
+  text as one layer, and a letter's own opacity applies on top of it (a letter
+  at 0.5 in a text at 0.5 shows at 0.25). Replacing the text's opacity with
+  the letter's would make a per-letter fade inside a fading text impossible,
+  and inheriting it would apply it twice. So "overriding" a letter's opacity
+  means setting its multiplier.
+- Tests: `test_propagation` in tests/test_text.c (setters, an animation followed
+  at every frame, a letter overridden by a setter, a letter taking over mid
+  animation without a jump, stroke width, opacity in pixels).

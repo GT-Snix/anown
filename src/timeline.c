@@ -190,12 +190,26 @@ static sample_kind sample_interp(const ani_channel *ch, int ncomp, ani_time at,
     return AT_RUNNING;
 }
 
+// Letters follow their text's fill, stroke and stroke width (docs/text.md) until
+// overridden: from the start of the letter's own first track, or for good once a
+// setter wrote the letter's base value. While a property follows, sampling it
+// samples the text's.
+static bool follows_text(ani_prop_ref ref, ani_prop_ref *text) {
+    if (ref.kind != ANI_TARGET_OBJ || ref.obj->kind != AN_KIND_GLYPH) return false;
+    if (ref.prop != AN_PROP_FILL && ref.prop != AN_PROP_STROKE && ref.prop != AN_PROP_STROKE_WIDTH) return false;
+    if (ref.obj->own_base & (1u << ref.prop)) return false;
+    *text = ani_obj_prop(ref.obj->u.glyph.text, ref.prop);
+    return true;
+}
+
 ani_value ani_sample_vel(ani_prop_ref ref, ani_time at, ani_value *velocity) {
     const ani_prop_info *pi = ani_prop_info_of(ref.prop);
     const ani_track *t;
     ani_value val, vel;
     const sample_kind k = sample_interp(channel(ref), pi->ncomp, at, &t, &val, &vel);
     if (velocity) *velocity = vel;
+    ani_prop_ref text;
+    if (k == AT_BASE && follows_text(ref, &text)) return ani_sample_vel(text, at, velocity);
     switch (k) {
     case AT_BASE: return ani_base_get(ref);
     case AT_START: return t->from_natural;
@@ -254,9 +268,19 @@ int64_t ani_record(an_scene *s, ani_prop_ref ref, int64_t start, int64_t duratio
         // from and velocity: the channel as it stands, at the new track's start
         const ani_track *w;
         ani_value vel;
+        ani_prop_ref text;
         switch (sample_interp(channel(ref), pi->ncomp, ani_tick_time(start), &w, &t.from, &vel)) {
         case AT_BASE:
-            t.from_natural = ani_base_get(ref);
+            // a letter taking over from its text starts from the text's value (and
+            // momentum) at that moment, so there's no jump
+            if (follows_text(ref, &text)) {
+                ani_value tv;
+                t.from_natural = ani_sample_vel(text, ani_tick_time(start), &tv);
+                vel = (ani_value){ { 0 } };
+                if (ease.kind == AN_EASE_KIND_SPRING) vel = tv;
+            } else {
+                t.from_natural = ani_base_get(ref);
+            }
             t.from = to_interp(pi, t.from_natural);
             break;
         case AT_START: t.from_natural = w->from_natural; break;
@@ -313,6 +337,7 @@ void ani_set(ani_prop_ref ref, ani_value natural) {
     const int64_t birth = ref.kind == ANI_TARGET_OBJ ? ref.obj->birth : 0; // the scene exists from 0
     if ((!ch || ch->count == 0) && s->cursor <= birth) {
         base_set(ref, natural); // nothing earlier exists to differ from
+        if (ref.kind == ANI_TARGET_OBJ) ref.obj->own_base |= 1u << ref.prop; // letters: overridden
         return;
     }
     ani_record(s, ref, s->cursor, 0, AN_EASE_LINEAR, natural, false, NULL);

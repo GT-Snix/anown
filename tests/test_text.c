@@ -662,6 +662,61 @@ static void test_text_in_layer(void) {
     an_scene_destroy(s);
 }
 
+// ---- text-level paint reaches the letters ---------------------------------------------------
+
+static bool same_color(an_color a, an_color b) { return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a; }
+
+// Letters follow the text's fill, stroke and stroke width (setters and tracks)
+// until a letter is overridden: from its own first track's start, or for good
+// once a setter writes the letter itself. Opacity multiplies down the tree.
+static void test_propagation(void) {
+    const an_color red = AN_HEX(0xFF0000), blue = AN_HEX(0x0078BF), green = AN_HEX(0x00FF00);
+    an_scene *s = scene(false);
+    an_set_chaos(s, 0.0f);
+    an_obj *t = an_text(s, &(an_text_opts){ .text = "III", .size = 120, .pos = { 100, 300 }, .stroke = AN_BLACK, .stroke_width = 2 });
+    an_obj *l0 = an_text_glyph(t, 0), *l1 = an_text_glyph(t, 1), *l2 = an_text_glyph(t, 2);
+    // a setter on the text at creation: every letter follows
+    an_obj_set_fill(t, red);
+    an_seek(s, 0);
+    CHECK(same_color(an_obj_get(l0).fill, red) && same_color(an_obj_get(l2).fill, red));
+    // letter 2 overridden by its own setter (a base write): it stays green throughout
+    an_obj_set_fill(l2, green);
+    // the text animates to blue over 1 s (frames 0..60); letter 1 takes over at 0.5 s
+    an_play_async(s, an_fill_to(t, blue, &(an_anim_opts){ .duration = 1.0f, .ease = AN_EASE_LINEAR }));
+    an_play_async(s, an_stroke_width_to(t, 10.0f, &(an_anim_opts){ .duration = 1.0f, .ease = AN_EASE_LINEAR }));
+    an_wait(s, 0.5f);
+    an_play(s, an_fill_to(l1, red, &(an_anim_opts){ .duration = 0.5f, .ease = AN_EASE_LINEAR }));
+    an_wait(s, 0.5f);
+    for (int f = 0; f <= 60; f += 10) {
+        an_seek(s, f);
+        const an_obj_state ts = an_obj_get(t), s0 = an_obj_get(l0), s1 = an_obj_get(l1), s2 = an_obj_get(l2);
+        CHECK(same_color(s0.fill, ts.fill));                       // follows at every frame
+        CHECK(s0.stroke_width == ts.stroke_width && s2.stroke_width == ts.stroke_width); // linear: 2 + 8 f / 60
+        CHECK_NEAR(ts.stroke_width, 2.0 + 8.0 * f / 60.0, 1e-5);
+        CHECK(same_color(s2.fill, green));                         // overridden for good
+        if (f <= 30) CHECK(same_color(s1.fill, ts.fill));          // until its own track starts (and at its start: no jump)
+    }
+    an_seek(s, 60);
+    CHECK(same_color(an_obj_get(t).fill, blue) && same_color(an_obj_get(l0).fill, blue));
+    CHECK(same_color(an_obj_get(l1).fill, red)); // its own track ended at red; the text's later value doesn't reach it
+    // in pixels at frame 60: letter 0 blue, letter 1 red, letter 2 green (centers as in test_draw_on)
+    render(s, 60);
+    CHECK(BLUE(123, 258) && is(170, 258, 255, 0, 0) && is(123 + 93, 258, 0, 255, 0));
+    an_scene_destroy(s);
+
+    // opacity multiplies: the text at 0.5 is one layer; a letter at 0.5 inside it
+    // ends at 0.25: black x 0.25 over paper = (182.25, 177.75, 169.5);
+    // the others at 0.5 = (121.5, 118.5, 113)
+    s = scene(false);
+    an_set_chaos(s, 0.0f);
+    t = an_text(s, &(an_text_opts){ .text = "III", .size = 120, .pos = { 100, 300 } });
+    an_obj_set_opacity(t, 0.5f);
+    an_obj_set_opacity(an_text_glyph(t, 1), 0.5f);
+    render(s, 0);
+    CHECK(near(123, 258, 121.5, 118.5, 113, 2) && near(170, 258, 182.25, 177.75, 169.5, 2));
+    an_scene_destroy(s);
+}
+
 int main(void) {
     if (!ani_gfx_setup_headless()) {
         fprintf(stderr, "test_text: headless Metal setup failed\n");
@@ -684,6 +739,7 @@ int main(void) {
     test_size_factor();
     test_text_shadow_cut();
     test_text_in_layer();
+    test_propagation();
 
     free(g_archivo.d);
     free(g_mono.d);

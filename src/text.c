@@ -155,7 +155,13 @@ static an_obj *make_text(an_scene *s, const ani_common_opts *node, const char *s
         free(L.line_w);
         return NULL;
     }
-    an_obj *t = ani_obj_make(s, AN_KIND_TEXT, node);
+    // the node carries the letters' paint too: letters follow its fill, stroke
+    // and stroke width until overridden (docs/text.md)
+    ani_common_opts nopts = *node;
+    nopts.fill = ts->fill;
+    nopts.stroke = ts->stroke;
+    nopts.stroke_width = ts->stroke_width;
+    an_obj *t = ani_obj_make(s, AN_KIND_TEXT, &nopts);
     an_obj **glyphs = NULL;
     int ng = 0;
     for (int i = 0; i < L.n; i++) ng += ani_font_glyph(f, L.g[i].gi)->path != NULL;

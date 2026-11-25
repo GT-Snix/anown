@@ -41,6 +41,9 @@ struct an_obj {
     an_toggle shadow;   // hard shadow override
     an_pattern pattern; // fill pattern (defaults applied)
     bool paper_under;   // fill the silhouette with the background color first
+    // letters: properties set on the letter itself (base writes), by bit
+    // (1 << an_prop). Those no longer follow the text (docs/text.md).
+    uint32_t own_base;
 
     // tracks per animatable property; NULL until the first track
     ani_channel *ch[AN_PROP_COUNT];

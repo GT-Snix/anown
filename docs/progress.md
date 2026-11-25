@@ -560,8 +560,15 @@ baseline.
 
 Stubbed / not done:
 - No shaping (GSUB): no ligatures, no complex scripts, Latin only. No wrapping.
-- Letters take the text's style at creation; animating the text node's fill
-  doesn't recolor them (animate the letters).
 - A per-letter fade costs a layer per fading letter (the "fill-only letters
   skip isolation" optimization isn't done).
 - The 12 ms ceiling is still missed by scenario 0 (p99 13–15 ms), unchanged.
+
+## Text-level paint reaches the letters (2026-11-25)
+
+Setters and animations of a text's fill, stroke and stroke width apply to its
+letters unless a letter was overridden (its own setter, or from its own first
+track on). Opacity multiplies down the tree. docs/text.md, "Text-level paint
+and the letters". `test_propagation` covers it; making letters never follow
+fails 19 checks, and starting a take-over from the letter's own value instead
+of the text's fails the no-jump check. All 16 test programs pass.
