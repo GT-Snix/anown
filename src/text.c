@@ -72,6 +72,28 @@ static bool lay_line(layout *L, float w) {
     return true;
 }
 
+// A codepoint the font lacks: say so once per (font, codepoint); the .notdef box is drawn.
+static void report_missing(an_font *f, uint32_t cp) {
+    for (int i = 0; i < f->nmissing; i++)
+        if (f->missing[i] == cp) return;
+    if (f->nmissing == f->missing_cap) {
+        const int cap = f->missing_cap ? f->missing_cap * 2 : 8;
+        uint32_t *p = ani_arena_alloc(&f->scene->arena, sizeof(uint32_t) * (size_t)cap, alignof(uint32_t));
+        if (!p) return;
+        if (f->nmissing) memcpy(p, f->missing, sizeof(uint32_t) * (size_t)f->nmissing);
+        f->missing = p;
+        f->missing_cap = cap;
+    }
+    f->missing[f->nmissing++] = cp;
+    char utf8[5] = { 0 };
+    if (cp < 0x80) utf8[0] = (char)cp;
+    else if (cp < 0x800) { utf8[0] = (char)(0xC0 | (cp >> 6)); utf8[1] = (char)(0x80 | (cp & 0x3F)); }
+    else if (cp < 0x10000) { utf8[0] = (char)(0xE0 | (cp >> 12)); utf8[1] = (char)(0x80 | ((cp >> 6) & 0x3F)); utf8[2] = (char)(0x80 | (cp & 0x3F)); }
+    else { utf8[0] = (char)(0xF0 | (cp >> 18)); utf8[1] = (char)(0x80 | ((cp >> 12) & 0x3F)); utf8[2] = (char)(0x80 | ((cp >> 6) & 0x3F)); utf8[3] = (char)(0x80 | (cp & 0x3F)); }
+    fprintf(stderr, "anown: the font '%s' has no glyph for U+%04X '%s' (drawn as a box)\n",
+            f->name ? f->name : "?", (unsigned)cp, utf8);
+}
+
 // Pen positions of every glyph (spaces included), line by line. k: px per unit.
 static bool layout_run(layout *L, an_font *f, const char *str, float k, bool kerning) {
     const unsigned char *s = (const unsigned char *)str;
@@ -93,6 +115,7 @@ static bool layout_run(layout *L, an_font *f, const char *str, float k, bool ker
             reps = 4;
         }
         const int gi = ani_font_index(f, cp);
+        if (gi == 0 && cp > 0x20) report_missing(f, cp);
         const ani_glyph *g = ani_font_glyph(f, gi);
         if (!g) return false;
         for (int r = 0; r < reps; r++) {

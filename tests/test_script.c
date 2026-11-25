@@ -266,6 +266,32 @@ static void test_text_limit(void) {
     an_scene_destroy(s);
 }
 
+// Missing glyphs (docs/plane.md): Archivo Black has no U+03BB (checked in its cmap);
+// three texts using it give one message naming the character and the font.
+// JetBrains Mono has it: no message.
+static void test_missing_glyph(void) {
+    an_scene *s = an_scene_create(NULL);
+    fflush(stderr);
+    const int saved = dup(2);
+    FILE *cap = tmpfile();
+    dup2(fileno(cap), 2);
+    an_text(s, &(an_text_opts){ .text = "\xCE\xBB" });
+    an_text(s, &(an_text_opts){ .text = "a \xCE\xBB \xCE\xBB" });
+    an_text(s, &(an_text_opts){ .text = "\xCE\xBB = 3", .font = an_font_mono(s) });
+    fflush(stderr);
+    dup2(saved, 2);
+    close(saved);
+    char msg[512] = { 0 };
+    rewind(cap);
+    const size_t got = fread(msg, 1, sizeof msg - 1, cap);
+    fclose(cap);
+    int lines = 0;
+    for (size_t i = 0; i < got; i++) lines += msg[i] == '\n';
+    CHECK(lines == 1 && strstr(msg, "U+03BB") && strstr(msg, "Archivo"));
+    if (lines != 1) fprintf(stderr, "%s", msg);
+    an_scene_destroy(s);
+}
+
 int main(void) {
     // first: frame dumps set up (and shut down) their own Metal context, like
     // an_scene_export and an_scene_save_png
@@ -282,6 +308,7 @@ int main(void) {
     test_text_letters();
     test_text_repeats();
     test_text_limit();
+    test_missing_glyph();
     ani_renderer_shutdown(&g_r);
     ani_offscreen_destroy(&g_off);
     ani_gfx_shutdown();

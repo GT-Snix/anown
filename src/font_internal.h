@@ -32,6 +32,8 @@ struct an_font {
     int num_glyphs;
     ani_glyph **cache;         // num_glyphs slots, filled on first use
     const char *name;          // for messages
+    uint32_t *missing;         // codepoints already reported missing (once each)
+    int nmissing, missing_cap;
 };
 
 // Cached glyph (flattened on first use). NULL only on allocation failure.
