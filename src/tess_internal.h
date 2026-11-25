@@ -30,12 +30,13 @@ typedef struct ani_draw_item {
 #define ANI_TARGET_MAIN (-1)
 
 typedef enum ani_paint {
-    // Stencil layout: bit 0x80 = the current object's silhouette (its shadow is cut
-    // where it's set); bits 0x7F = write-once marks for translucent paints in layers.
+    // Stencil layout (src/render.c, docs/text.md): bit 0x80 = the current object's
+    // silhouette (its shadow is cut where it's set); bits 0x70 = write-once marks
+    // for translucent paints in layers; bits 0x0F = winding counter (glyph fills).
     ANI_PAINT_DIRECT,        // no stencil (opaque paints)
     ANI_PAINT_SHADOW,        // translucent shadow in a layer: outside the silhouette, write-once
-    ANI_PAINT_FILL,          // layers: translucent fill, write-once (ref 2 in the low bits)
-    ANI_PAINT_INK,           // layers: translucent ink, write-once (ref 3 in the low bits)
+    ANI_PAINT_FILL,          // layers: translucent fill, write-once (mark 0x20)
+    ANI_PAINT_INK,           // layers: translucent ink, write-once (mark 0x30)
     ANI_PAINT_STENCIL_CLEAR, // layers: reset all stencil bits under an object; no color
     ANI_PAINT_BACKGROUND,    // main: the scene background (flat quad, or the paper shader)
     ANI_PAINT_SILHOUETTE,    // set the silhouette bit (fill + shifted fill + ink); no color

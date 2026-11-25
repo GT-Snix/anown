@@ -457,3 +457,25 @@ load 2.7 but alternated run by run. Frame time: waiting for a quiet machine.
 - **`.paper_under`** per object: the silhouette filled with the background color
   before the object's paints (docs/layers.md). Tests and a sabotage check
   (dropping the paper command fails all three cases).
+
+## Text, step 1: stencil re-split (2026-11-25)
+
+No behavior change. The 8 stencil bits are re-budgeted for glyph fills
+(docs/text.md, problem 1): `0x80` silhouette (unchanged), `0x70` write-once
+marks (shadow `0x70`, fill `0x20`, ink `0x30`, previously `0x7F`, 2 and 3 on
+the low 7 bits), `0x0F` reserved for the winding counter. Every state reads
+and writes only its own field.
+
+- All 15 test programs pass.
+- `scripts/ref-frames.sh` (new): 60 PNGs from every example that writes them,
+  plus the test PNGs. Byte-identical to the baseline.
+- Those frames don't use translucent paints, which is where the marks live, so
+  a scratch program also rendered 24 frames of translucent fills, inks and
+  shadows (halftone, paper_under, a faded group, forced isolation, chaos 0 and
+  1) against the baseline commit and the re-split tree: raw pixels identical.
+  Giving fill the ink's mark on purpose changed all 24, so the check sees it.
+- stb: the pin was already upstream HEAD (`6b5799b`, truetype v1.28);
+  `fetch-deps.sh` now also fetches `stb_truetype.h` and stb's LICENSE. All 60
+  reference PNGs byte-identical after the re-fetch.
+- Fonts in `assets/fonts/` with their OFL texts and copyright notices
+  (`assets/fonts/README.md` has sources, commits and hashes).

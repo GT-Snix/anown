@@ -87,10 +87,12 @@ however many of its triangles overlap there. The three options:
   layer they use the plain paint pipeline and don't touch the stencil. So does
   the direct path, which only draws opaque paints.
 - sokol bakes the stencil ref into the pipeline (there's no dynamic ref call in
-  this version), so the stencil paints use fixed pipelines: shadow ref 1 (5B),
-  fill ref 2, ink ref 3.
+  this version), so the stencil paints use fixed pipelines. Since the text step
+  (docs/text.md, problem 1) the 8 bits are split: `0x80` silhouette, `0x70`
+  write-once marks (shadow `0x70`, fill `0x20`, ink `0x30`), `0x0F` the winding
+  counter of glyph fills. Each state reads and writes only its own field.
 - **Shared layers.** A group's layer can hold several translucent objects whose
-  fills share ref 2, so object B's fill would be blocked wherever A's had
+  fills share one mark, so object B's fill would be blocked wherever A's had
   written. Before a translucent object, if an earlier one already dirtied the
   layer's stencil, the tessellator inserts a **stencil-clear quad** (color writes
   off, stencil `ALWAYS` / `REPLACE` ref 0) covering **only that object's
@@ -259,13 +261,14 @@ with effective chaos.
   2. The shadow commands pass only where that bit is clear:
      - opaque (`SHADOW_CUT`, main target or layer): `EQUAL 0` on read mask
        `0x80`, writing nothing;
-     - translucent (`SHADOW`, always in a layer): `ref 0x7F GREATER stencil`
-       over all bits. That fails inside the silhouette (≥ `0x80`) and where this
-       layer already has a shadow mark (`0x7F`), so the union still covers each
-       sample once. It then writes `0x7F` to the low bits.
+     - translucent (`SHADOW`, always in a layer): `ref 0x70 GREATER stencil`
+       on read mask `0xF0` (silhouette and marks). That fails inside the
+       silhouette (≥ `0x80`) and where this layer already has a shadow mark
+       (`0x70`), so the union still covers each sample once. It then writes
+       `0x70` to the marks.
   3. `SILHOUETTE_CLEAR`: the same geometry, clearing bit `0x80`, so a later
      object's shadow can still fall across this one.
-  Fill and ink write-once marks (2, 3) use read/write mask `0x7F` and never see
+  Fill and ink write-once marks (`0x20`, `0x30`) use read/write mask `0x70` and never see
   the silhouette bit. So a halftone or hatch gap, and the riso sliver between
   the ink and the moved fill, show **what's under the object** (paper, or an
   object beneath), never its own shadow.

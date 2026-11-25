@@ -77,7 +77,13 @@ static sg_pipeline make_shape_pip(sg_shader shd, sg_pixel_format cf, sg_pixel_fo
 }
 
 // A stencil state: compare (stencil & read) with (ref & read); on pass, apply `pass`
-// to the bits in `write`. Layout: 0x80 = silhouette bit, 0x7F = write-once marks.
+// to the bits in `write`. Layout (docs/text.md, problem 1):
+//   0x80  silhouette bit (the shadow cut)
+//   0x70  write-once marks for translucent paints in layers: shadow 0x70,
+//         fill 0x20, ink 0x30
+//   0x0F  winding counter for stencil-then-cover fills (glyphs), mod 16
+// Every state below reads and writes only its own field, so the fields never
+// disturb one another.
 static sg_stencil_state stencil(sg_compare_func cmp, sg_stencil_op pass, uint8_t ref, uint8_t read, uint8_t write) {
     const sg_stencil_face_state f = { .compare = cmp, .fail_op = SG_STENCILOP_KEEP,
                                       .depth_fail_op = SG_STENCILOP_KEEP, .pass_op = pass };
@@ -88,17 +94,17 @@ static sg_stencil_state stencil(sg_compare_func cmp, sg_stencil_op pass, uint8_t
 //   silhouette set/clear: always; write the 0x80 bit to 1 / 0 (color off)
 //   shadow cut:    pass where the silhouette bit is 0; write nothing (opaque
 //                  shadows, main or layer)
-//   layer shadow:  pass where 0x7F > stencil, i.e. outside the silhouette (bit
-//                  0x80 clear) and not yet shadowed (low bits != 0x7F); then
-//                  write 0x7F to the low bits: write-once, as before
-//   layer fill/ink: write-once on the low bits only (refs 2 and 3)
+//   layer shadow:  read 0xF0 (silhouette + marks): pass where 0x70 > those bits,
+//                  i.e. outside the silhouette (0x80 clear) and not yet shadowed
+//                  (marks != 0x70); then write 0x70 to the marks: write-once
+//   layer fill/ink: write-once on the marks only (0x20 and 0x30)
 //   stencil clear: always; all bits to 0 (color off)
 #define ST_SIL      stencil(SG_COMPAREFUNC_ALWAYS, SG_STENCILOP_REPLACE, 0x80, 0xFF, 0x80)
 #define ST_SILCLR   stencil(SG_COMPAREFUNC_ALWAYS, SG_STENCILOP_REPLACE, 0x00, 0xFF, 0x80)
 #define ST_SHADOW_M stencil(SG_COMPAREFUNC_EQUAL, SG_STENCILOP_KEEP, 0x00, 0x80, 0x00)
-#define ST_SHADOW_L stencil(SG_COMPAREFUNC_GREATER, SG_STENCILOP_REPLACE, 0x7F, 0xFF, 0x7F)
-#define ST_FILL_L   stencil(SG_COMPAREFUNC_NOT_EQUAL, SG_STENCILOP_REPLACE, 0x02, 0x7F, 0x7F)
-#define ST_INK_L    stencil(SG_COMPAREFUNC_NOT_EQUAL, SG_STENCILOP_REPLACE, 0x03, 0x7F, 0x7F)
+#define ST_SHADOW_L stencil(SG_COMPAREFUNC_GREATER, SG_STENCILOP_REPLACE, 0x70, 0xF0, 0x70)
+#define ST_FILL_L   stencil(SG_COMPAREFUNC_NOT_EQUAL, SG_STENCILOP_REPLACE, 0x20, 0x70, 0x70)
+#define ST_INK_L    stencil(SG_COMPAREFUNC_NOT_EQUAL, SG_STENCILOP_REPLACE, 0x30, 0x70, 0x70)
 #define ST_CLEAR_L  stencil(SG_COMPAREFUNC_ALWAYS, SG_STENCILOP_REPLACE, 0x00, 0xFF, 0xFF)
 
 static sg_pipeline make_comp_pip(sg_shader shd, sg_pixel_format cf, sg_pixel_format df, int samples, const char *label) {
