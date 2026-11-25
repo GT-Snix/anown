@@ -133,7 +133,7 @@ ani_path *ani_pb_finish(ani_path_builder *b, ani_arena *a) {
 
 // ---- shapes -------------------------------------------------------------------------
 
-ani_path *ani_path_segs(ani_arena *a, const an_seg *segs, int n) {
+ani_path *ani_path_segs(ani_arena *a, const an_seg *segs, int n, float tol) {
     ani_path_builder b;
     ani_pb_init(&b);
     bool ok = true;
@@ -142,8 +142,8 @@ ani_path *ani_path_segs(ani_arena *a, const an_seg *segs, int n) {
         switch (g->kind) {
         case AN_SEG_MOVE: ok = ani_pb_move(&b, g->p[0]); break;
         case AN_SEG_LINE: ok = ani_pb_line(&b, g->p[0]); break;
-        case AN_SEG_QUAD: ok = ani_pb_quad(&b, g->p[0], g->p[1], ANI_FLATNESS); break;
-        case AN_SEG_CUBIC: ok = ani_pb_cubic(&b, g->p[0], g->p[1], g->p[2], ANI_FLATNESS); break;
+        case AN_SEG_QUAD: ok = ani_pb_quad(&b, g->p[0], g->p[1], tol); break;
+        case AN_SEG_CUBIC: ok = ani_pb_cubic(&b, g->p[0], g->p[1], g->p[2], tol); break;
         case AN_SEG_CLOSE: ani_pb_close(&b); break;
         }
     }
@@ -156,23 +156,23 @@ ani_path *ani_path_rect(ani_arena *a, an_vec2 size) {
     const float hx = size.x * 0.5f, hy = size.y * 0.5f;
     // starts at the top-left corner and runs clockwise on screen
     const an_seg segs[5] = { AN_MOVE(-hx, -hy), AN_LINE(hx, -hy), AN_LINE(hx, hy), AN_LINE(-hx, hy), AN_CLOSE };
-    return ani_path_segs(a, segs, 5);
+    return ani_path_segs(a, segs, 5, ANI_FLATNESS); // straight segments only: tolerance unused
 }
 
-int ani_circle_segments(float radius) {
+int ani_circle_segments(float radius, float tol) {
     // sagitta r (1 - cos(pi/n)) <= tol  =>  n >= pi / acos(1 - tol/r)
     const double r = fabs((double)radius);
-    if (r <= ANI_FLATNESS) return 8;
-    double n = ceil(ANI_PI_D / acos(1.0 - ANI_FLATNESS / r));
+    if (r <= tol) return 8;
+    double n = ceil(ANI_PI_D / acos(1.0 - tol / r));
     if (n < 16) n = 16;
     if (n > 2048) n = 2048;
     return (int)n;
 }
 
-ani_path *ani_path_circle(ani_arena *a, float radius) {
+ani_path *ani_path_circle(ani_arena *a, float radius, float tol) {
     ani_path_builder b;
     ani_pb_init(&b);
-    const int n = ani_circle_segments(radius);
+    const int n = ani_circle_segments(radius, tol);
     // starts at the top and runs clockwise on screen (y down)
     bool ok = ani_pb_move(&b, (an_vec2){ 0, -radius });
     for (int i = 1; ok && i < n; i++) {
@@ -187,7 +187,7 @@ ani_path *ani_path_circle(ani_arena *a, float radius) {
 
 ani_path *ani_path_line(ani_arena *a, an_vec2 from, an_vec2 to) {
     const an_seg segs[2] = { AN_MOVE(from.x, from.y), AN_LINE(to.x, to.y) };
-    return ani_path_segs(a, segs, 2);
+    return ani_path_segs(a, segs, 2, ANI_FLATNESS); // straight segments only: tolerance unused
 }
 
 ani_path *ani_path_arrow(ani_arena *a, an_vec2 from, an_vec2 to, float head) {
@@ -200,7 +200,7 @@ ani_path *ani_path_arrow(ani_arena *a, an_vec2 from, an_vec2 to, float head) {
     // shaft, then the head as one pen stroke through the tip
     const an_seg segs[5] = { AN_MOVE(from.x, from.y), AN_LINE(to.x, to.y),
                              AN_MOVE(w1.x, w1.y), AN_LINE(to.x, to.y), AN_LINE(w2.x, w2.y) };
-    return ani_path_segs(a, segs, 5);
+    return ani_path_segs(a, segs, 5, ANI_FLATNESS); // straight segments only: tolerance unused
 }
 
 // ---- queries ------------------------------------------------------------------------

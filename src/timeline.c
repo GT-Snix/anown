@@ -21,6 +21,9 @@ static const ani_prop_info g_props[AN_PROP_COUNT] = {
     [AN_PROP_STROKE_WIDTH] = { 1, ANI_SPACE_LINEAR, 0.01 },
     [AN_PROP_DRAW] = { 1, ANI_SPACE_LINEAR, 1e-4 },
     [AN_PROP_CHAOS] = { 1, ANI_SPACE_LINEAR, 1e-4 },
+    [AN_PROP_CAMERA_POS] = { 2, ANI_SPACE_LINEAR, 0.01 },
+    [AN_PROP_CAMERA_ZOOM] = { 1, ANI_SPACE_LOG, 1e-4 },
+    [AN_PROP_CAMERA_ROTATION] = { 1, ANI_SPACE_LINEAR, 1e-4 },
 };
 
 #define SETTLE_RELATIVE 1e-3 // spring tolerance relative to travel distance
@@ -44,13 +47,21 @@ static an_color to_color(ani_value v) {
 
 bool ani_prop_valid(ani_target_kind kind, an_prop p) {
     if (p < 0 || p >= AN_PROP_COUNT) return false;
-    if (kind == ANI_TARGET_SCENE) return p == AN_PROP_CHAOS; // the scene's only property so far
-    return true;
+    const bool camera = p == AN_PROP_CAMERA_POS || p == AN_PROP_CAMERA_ZOOM || p == AN_PROP_CAMERA_ROTATION;
+    if (kind == ANI_TARGET_SCENE) return p == AN_PROP_CHAOS || camera;
+    return !camera;
 }
 
 ani_value ani_base_get(ani_prop_ref ref) {
     if (ref.kind == ANI_TARGET_SCENE) {
-        return ref.prop == AN_PROP_CHAOS ? (ani_value){ { ref.scene->chaos } } : (ani_value){ { 0 } };
+        const an_scene *s = ref.scene;
+        switch (ref.prop) {
+        case AN_PROP_CHAOS: return (ani_value){ { s->chaos } };
+        case AN_PROP_CAMERA_POS: return (ani_value){ { s->cam_pos.x, s->cam_pos.y } };
+        case AN_PROP_CAMERA_ZOOM: return (ani_value){ { s->cam_zoom } };
+        case AN_PROP_CAMERA_ROTATION: return (ani_value){ { s->cam_rot } };
+        default: return (ani_value){ { 0 } };
+        }
     }
     const an_obj *o = ref.obj;
     switch (ref.prop) {
@@ -64,14 +75,18 @@ ani_value ani_base_get(ani_prop_ref ref) {
     case AN_PROP_Z: return (ani_value){ { (double)o->z } };
     case AN_PROP_STROKE_WIDTH: return (ani_value){ { o->stroke_width } };
     case AN_PROP_DRAW: return (ani_value){ { o->draw } };
-    case AN_PROP_COUNT: break;
+    default: break; // camera properties aren't the object's
     }
     return (ani_value){ { 0 } };
 }
 
 static void base_set(ani_prop_ref ref, ani_value v) {
     if (ref.kind == ANI_TARGET_SCENE) {
-        if (ref.prop == AN_PROP_CHAOS) ref.scene->chaos = (float)v.v[0];
+        an_scene *s = ref.scene;
+        if (ref.prop == AN_PROP_CHAOS) s->chaos = (float)v.v[0];
+        if (ref.prop == AN_PROP_CAMERA_POS) s->cam_pos = (an_vec2){ (float)v.v[0], (float)v.v[1] };
+        if (ref.prop == AN_PROP_CAMERA_ZOOM) s->cam_zoom = (float)v.v[0];
+        if (ref.prop == AN_PROP_CAMERA_ROTATION) s->cam_rot = (float)v.v[0];
         return;
     }
     an_obj *o = ref.obj;
@@ -86,7 +101,7 @@ static void base_set(ani_prop_ref ref, ani_value v) {
     case AN_PROP_Z: o->z = (int)v.v[0]; break;
     case AN_PROP_STROKE_WIDTH: o->stroke_width = (float)v.v[0]; break;
     case AN_PROP_DRAW: o->draw = (float)v.v[0]; break;
-    case AN_PROP_COUNT: break;
+    default: break;
     }
 }
 
@@ -108,6 +123,7 @@ static ani_channel *channel(ani_prop_ref ref) {
 // ---- natural <-> interp space -------------------------------------------------------
 
 static ani_value to_interp(const ani_prop_info *pi, ani_value n) {
+    if (pi->space == ANI_SPACE_LOG) return (ani_value){ { log(n.v[0] > 1e-9 ? n.v[0] : 1e-9) } };
     if (pi->space != ANI_SPACE_OKLAB) return n;
     const ani_lab lab = ani_srgb_to_oklab(n.v[0], n.v[1], n.v[2]);
     return (ani_value){ { lab.L, lab.a, lab.b, n.v[3] } };
@@ -116,6 +132,7 @@ static ani_value to_interp(const ani_prop_info *pi, ani_value n) {
 static double clamp01(double x) { return x < 0.0 ? 0.0 : (x > 1.0 ? 1.0 : x); }
 
 static ani_value to_natural(an_prop p, const ani_prop_info *pi, ani_value i) {
+    if (pi->space == ANI_SPACE_LOG) return (ani_value){ { exp(i.v[0]) } };
     if (pi->space == ANI_SPACE_OKLAB) {
         ani_value n;
         ani_oklab_to_srgb((ani_lab){ i.v[0], i.v[1], i.v[2] }, &n.v[0], &n.v[1], &n.v[2]);
@@ -291,7 +308,7 @@ int64_t ani_record(an_scene *s, ani_prop_ref ref, int64_t start, int64_t duratio
         t.v0 = (ease.kind == AN_EASE_KIND_SPRING) ? vel : (ani_value){ { 0 } };
     }
 
-    if (relative && pi->space == ANI_SPACE_LINEAR) {
+    if (relative && pi->space == ANI_SPACE_LINEAR) { // (log space: relative isn't offered)
         for (int c = 0; c < pi->ncomp; c++) t.to.v[c] = t.from.v[c] + value.v[c];
         t.to_natural = to_natural(ref.prop, pi, t.to);
     } else {
@@ -512,13 +529,61 @@ an_anim an_scene_chaos_to(an_scene *s, float c, const an_anim_opts *op) {
     return a;
 }
 
+// ---- camera (docs/camera.md) ----------------------------------------------------------
+
+static an_anim scene_anim(an_scene *s, an_prop p, float a, float b, const an_anim_opts *op) {
+    an_anim x = anim(NULL, p, false, a, b, 0, 0, op);
+    x.scene = s;
+    return x;
+}
+an_anim an_camera_move_to(an_scene *s, an_vec2 pos, const an_anim_opts *op) { return scene_anim(s, AN_PROP_CAMERA_POS, pos.x, pos.y, op); }
+an_anim an_camera_zoom_to(an_scene *s, float z, const an_anim_opts *op) { return scene_anim(s, AN_PROP_CAMERA_ZOOM, z > 1e-6f ? z : 1e-6f, 0, op); }
+an_anim an_camera_rotate_to(an_scene *s, float r, const an_anim_opts *op) { return scene_anim(s, AN_PROP_CAMERA_ROTATION, r, 0, op); }
+void an_camera_set_pos(an_scene *s, an_vec2 p) {
+    if (s) ani_set(ani_scene_prop(s, AN_PROP_CAMERA_POS), (ani_value){ { p.x, p.y } });
+}
+void an_camera_set_zoom(an_scene *s, float z) {
+    if (s) ani_set(ani_scene_prop(s, AN_PROP_CAMERA_ZOOM), (ani_value){ { z > 1e-6f ? z : 1e-6f } });
+}
+void an_camera_set_rotation(an_scene *s, float r) {
+    if (s) ani_set(ani_scene_prop(s, AN_PROP_CAMERA_ROTATION), (ani_value){ { r } });
+}
+
+ani_camera ani_camera_at(an_scene *s, ani_time at) {
+    const ani_value p = ani_sample(ani_scene_prop(s, AN_PROP_CAMERA_POS), at);
+    ani_camera c = {
+        .pos = { (float)p.v[0], (float)p.v[1] },
+        .zoom = (float)ani_sample(ani_scene_prop(s, AN_PROP_CAMERA_ZOOM), at).v[0],
+        .rot = (float)ani_sample(ani_scene_prop(s, AN_PROP_CAMERA_ROTATION), at).v[0],
+    };
+    return c;
+}
+
+double ani_obj_area_scale_at(an_obj *o, ani_time at) {
+    double det = ani_sample(ani_scene_prop(o->scene, AN_PROP_CAMERA_ZOOM), at).v[0];
+    det *= det;
+    for (an_obj *p = o; p && p->parent; p = p->parent) {
+        const ani_value sc = ani_sample(ani_obj_prop(p, AN_PROP_SCALE), at);
+        det *= sc.v[0] * sc.v[1];
+    }
+    return sqrt(fabs(det));
+}
+
+an_camera_state an_camera_get(const an_scene *s) {
+    if (!s) return (an_camera_state){ 0 };
+    const ani_camera c = ani_camera_at((an_scene *)s, ani_frame_time(s, s->frame)); // sampling reads only
+    return (an_camera_state){ .pos = c.pos, .zoom = c.zoom, .rotation = c.rot };
+}
+
 double ani_scene_chaos_at(an_scene *s, ani_time at) {
     return ani_sample(ani_scene_prop(s, AN_PROP_CHAOS), at).v[0];
 }
 
 double ani_obj_chaos_at(an_obj *o, ani_time at) {
     double c = ani_scene_chaos_at(o->scene, at);
-    double det = 1.0; // of the world transform: the product of the scales' determinants
+    // of the world transform: the camera zoom squared times the scales' determinants
+    const double zoom = ani_sample(ani_scene_prop(o->scene, AN_PROP_CAMERA_ZOOM), at).v[0];
+    double det = zoom * zoom;
     for (an_obj *p = o; p && p->parent; p = p->parent) { // the hidden root isn't a target
         c *= ani_sample(ani_obj_prop(p, AN_PROP_CHAOS), at).v[0];
         const ani_value sc = ani_sample(ani_obj_prop(p, AN_PROP_SCALE), at);

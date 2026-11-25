@@ -90,6 +90,8 @@ static an_scene *scene_shapes(int variant) {
     an_play_async(s, an_draw(st, &(an_anim_opts){ .duration = 1.2f }));
     an_play_async(s, an_scene_chaos_to(s, 1.0f, &(an_anim_opts){ .duration = 0.6f }));
     an_play_async(s, an_fade_to(g, 0.5f, &(an_anim_opts){ .duration = 1.0f }));
+    // the camera pans (a pure translation: the per-draw fast path)
+    an_play_async(s, an_camera_move_to(s, (an_vec2){ 360, 150 }, &(an_anim_opts){ .duration = 1.6f }));
     an_wait(s, 2.0f);
     return s;
 }
@@ -111,6 +113,10 @@ static an_scene *scene_text(void) {
     an_stagger(s, 5, fades, 0.1f);
     an_play(s, an_fade_to(an_code_line(c, 2), 1.0f, &(an_anim_opts){ .duration = 0.3f }));
     an_play(s, an_fill_to(t, p->c, &(an_anim_opts){ .duration = 0.5f }));
+    // a zoom out and back to exactly 1: frames switch between the camera in the
+    // world transforms and the fast path
+    an_play(s, an_camera_zoom_to(s, 1.3f, &(an_anim_opts){ .duration = 0.3f }));
+    an_play(s, an_camera_zoom_to(s, 1.0f, &(an_anim_opts){ .duration = 0.3f }));
     an_wait(s, 0.3f);
     return s;
 }

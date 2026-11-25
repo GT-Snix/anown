@@ -429,8 +429,8 @@ static void test_rotate_letter(void) {
     free(base);
 }
 
-// Snapping (docs/text.md, problem 2): relative to the text's own origin; only
-// for a translation x uniform scale, and an unrotated, uniformly scaled letter.
+// Snapping (docs/text.md, problem 2; docs/camera.md (b)): relative to the text's
+// own origin; only at an effective scale of exactly 1.
 static void test_snap(void) {
     const an_vec2 pen = { 16.8f, 0.0f }; // the mono's advance at 28 px
     ani_affine w = { 1, 0, 0, 1, 0, 0 };
@@ -438,10 +438,12 @@ static void test_snap(void) {
     CHECK(ani_text_snap((ani_affine){ 1, 0, 0, 1, 100.37f, 50 }, &w, pen, 0.0f, (an_vec2){ 1, 1 }));
     CHECK_NEAR(w.tx, 0.2, 1e-5);
     CHECK_NEAR(w.ty, 0.0, 1e-6);
-    // uniform scale 1.5: 16.8 x 1.5 = 25.2 -> 25 (-0.2)
+    // uniform scale 1.5: no snapping either, only at an effective scale of exactly
+    // 1 (docs/camera.md, (b)); nor for a letter scaled 2 inside a scale-1 text
     w = (ani_affine){ 1, 0, 0, 1, 0, 0 };
-    CHECK(ani_text_snap((ani_affine){ 1.5f, 0, 0, 1.5f, 0, 0 }, &w, pen, 0.0f, (an_vec2){ 1, 1 }));
-    CHECK_NEAR(w.tx, -0.2, 1e-5);
+    CHECK(!ani_text_snap((ani_affine){ 1.5f, 0, 0, 1.5f, 0, 0 }, &w, pen, 0.0f, (an_vec2){ 1, 1 }));
+    CHECK(!ani_text_snap((ani_affine){ 1, 0, 0, 1, 0, 0 }, &w, pen, 0.0f, (an_vec2){ 2, 2 }));
+    CHECK(w.tx == 0.0f);
     // no snapping under rotation or non-uniform scale (text or letter)
     w = (ani_affine){ 1, 0, 0, 1, 0, 0 };
     CHECK(!ani_text_snap((ani_affine){ 0.995f, 0.0998f, -0.0998f, 0.995f, 0, 0 }, &w, pen, 0.0f, (an_vec2){ 1, 1 }));

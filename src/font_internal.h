@@ -11,8 +11,8 @@
 
 #include "stb_truetype.h"
 
-// Flattening tolerance, as a fraction of the em: 0.075 px at 300 px.
-#define ANI_GLYPH_FLATNESS_EM (1.0f / 4000.0f)
+// Flattening tolerance: 1 / (1000 x max_zoom) of the em, i.e. 1/4000 em (0.075 px
+// at 300 px) at the default max_zoom (src/font.c).
 
 typedef struct ani_glyph {
     int index;            // glyph index in the font

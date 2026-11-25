@@ -106,6 +106,15 @@ typedef struct ani_mesh {
     // Per-object tessellation cache (tess.c, docs/layers.md "Memoized
     // tessellation"): an object's (or a text batch's) vertices and commands,
     // keyed by everything they depend on. Never changes the output.
+    // the camera this frame (docs/camera.md). A pure translation isn't put into
+    // the world transforms: it's this per-draw offset (scene px), so cache keys
+    // don't change while the camera pans or shakes.
+    float cam_dx, cam_dy;
+    bool cam_fast_off;      // benchmarks: always put the camera in the world transform
+    // the largest scale on screen of any drawn object this frame (largest
+    // singular value of its world transform), for the max_zoom warning
+    float max_screen_scale;
+    int snapped_letters;    // letters snapped to whole pixels this frame (tests)
     struct ani_memo *memo;
     bool memo_off;          // tessellate everything every frame (tests, benchmarks)
     size_t memo_budget;     // bytes of cached vertices and commands; 0: ANI_MEMO_BUDGET
@@ -137,6 +146,11 @@ ani_affine ani_affine_mul(ani_affine parent, ani_affine child);
 an_vec2 ani_affine_apply(ani_affine m, an_vec2 p);
 // World transform of the BASE state: product of base locals from the top down.
 ani_affine ani_obj_world(const an_obj *o);
+
+// Boil bucket spacing (local units) for an object at a time: the style's
+// spacing, coarsened by powers of two below 6 px on screen (docs/camera.md).
+typedef struct ani_time ani_time;
+float ani_boil_spacing(const an_scene *s, an_obj *c, ani_time at);
 
 // Append one triangle. Skips triangles with near-zero area or non-finite
 // coordinates (so the mesh never contains either). False on allocation failure.

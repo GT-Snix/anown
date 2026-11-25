@@ -146,8 +146,8 @@ static void test_tessellation_deterministic(void) {
     }
     CHECK(m1.count == m2.count && m1.count > 0);
     CHECK(memcmp(m1.v, m2.v, (size_t)m1.count * sizeof(ani_vertex)) == 0);
-    CHECK(ani_circle_segments(1) == 16 && ani_circle_segments(1e6f) == 2048); // clamped
-    CHECK(ani_circle_segments(100) == 100); // ceil(pi / acos(1 - 0.05/100)) = ceil(99.34), via bc
+    CHECK(ani_circle_segments(1, ANI_FLATNESS) == 16 && ani_circle_segments(1e6f, ANI_FLATNESS) == 2048); // clamped
+    CHECK(ani_circle_segments(100, ANI_FLATNESS) == 100); // ceil(pi / acos(1 - 0.05/100)) = ceil(99.34), via bc
     ani_mesh_free(&m1);
     ani_mesh_free(&m2);
 }

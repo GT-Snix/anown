@@ -8,6 +8,8 @@
 //
 //   spike_frame_bench [scenario] [--profile] [--no-memo]
 // --no-memo turns the per-object tessellation cache off (src/tess.c).
+// --no-camfast puts a translating camera into every world transform instead of
+// the per-draw offset (docs/camera.md, the fast path).
 // --profile also splits every measured frame into phases (tessellate, upload,
 // encode + commit, GPU render, the readback blit, the copy out) and prints the
 // median of each phase and the split of the median and p99 frames.
@@ -132,7 +134,7 @@ static an_scene *build(int scenario) {
     an_obj *group = scenario == 2 ? an_group(s, &(an_group_opts){ .hidden = true }) : NULL;
     // scenario 6: everything drawn from the start; every 10th object moves for the
     // whole timeline (10% of 250), the rest stand still (boil still runs)
-    const bool drawn = scenario == 6;
+    const bool drawn = scenario == 6 || scenario == 7;
     an_obj *all[250];
     int nall = 0;
     an_obj *shapes[50];
@@ -175,6 +177,9 @@ static an_scene *build(int scenario) {
     if (drawn) {
         for (int i = 0; i < nall; i += 10)
             an_play_async(s, an_move_by(all[i], (an_vec2){ 120, 40 }, &(an_anim_opts){ .duration = 6.0f, .ease = AN_EASE_LINEAR }));
+        // scenario 7: and the camera pans the whole time (a pure translation)
+        if (scenario == 7)
+            an_play_async(s, an_camera_move_to(s, (an_vec2){ 1100, 600 }, &(an_anim_opts){ .duration = 6.0f, .ease = AN_EASE_LINEAR }));
         an_wait(s, 6.0f);
         return s;
     }
@@ -189,10 +194,11 @@ static an_scene *build(int scenario) {
 
 int main(int argc, char **argv) {
     const int scenario = argc > 1 ? atoi(argv[1]) : 0;
-    bool profile = false, no_memo = false;
+    bool profile = false, no_memo = false, no_camfast = false;
     for (int i = 2; i < argc; i++) {
         profile = profile || strcmp(argv[i], "--profile") == 0;
         no_memo = no_memo || strcmp(argv[i], "--no-memo") == 0;
+        no_camfast = no_camfast || strcmp(argv[i], "--no-camfast") == 0;
     }
     if (!machine_quiet("before the run")) return 3;
     an_scene *s = build(scenario);
@@ -214,6 +220,8 @@ int main(int argc, char **argv) {
     ani_mesh_init(&m);
     m.memo_off = no_memo;
     r.mesh.memo_off = no_memo;
+    m.cam_fast_off = no_camfast;
+    r.mesh.cam_fast_off = no_camfast;
     double tess = 0, tess_worst = 0;
     int max_tris = 0, max_layers = 0;
     for (int64_t f = 0; f <= L; f++) {
@@ -287,10 +295,10 @@ int main(int argc, char **argv) {
             worst_frame = f;
         }
     }
-    static const char *names[7] = { "opaque (direct path)", "50 shapes fading together",
+    static const char *names[8] = { "opaque (direct path)", "50 shapes fading together",
                                     "everything in one fading group", "opaque, shadows on",
                                     "opaque, paper grain and vignette off", "30 x 60 code block",
-                                    "all drawn, 10% of objects moving" };
+                                    "all drawn, 10% of objects moving", "as 6, with the camera panning" };
     if (!machine_quiet("after the run")) return 3;
     printf("200 strokes + 50 filled shapes, scenario %d: %s, %lld frames, up to %d triangles, up to %d layers/frame\n",
            scenario, names[scenario], (long long)(L + 1), max_tris, max_layers);
@@ -306,7 +314,7 @@ int main(int argc, char **argv) {
     }
     printf("  full frame (frames %d..%lld): median %.2f  p99 %.2f  worst %.2f ms at frame %lld; %d frames over 12 ms; %d over 16.7 ms; cache %s\n",
            WARMUP, (long long)L, sorted[counted / 2], sorted[(counted * 99) / 100], worst, (long long)worst_frame, over12,
-           over16, no_memo ? "off" : "on");
+           over16, no_memo ? "off" : (no_camfast ? "on, camera in transforms" : "on"));
     if (!no_memo)
         printf("  tessellation cache (frames %d..%lld): %.1f%% of object emissions replayed (%ld hits, %ld misses)\n", WARMUP,
                (long long)L, 100.0 * (double)memo_hits / (double)(memo_hits + memo_misses + (memo_hits + memo_misses == 0)),

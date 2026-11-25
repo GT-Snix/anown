@@ -31,7 +31,7 @@ typedef struct ani_value {
     double v[4];
 } ani_value;
 
-typedef enum ani_space { ANI_SPACE_LINEAR, ANI_SPACE_OKLAB, ANI_SPACE_STEP } ani_space;
+typedef enum ani_space { ANI_SPACE_LINEAR, ANI_SPACE_OKLAB, ANI_SPACE_STEP, ANI_SPACE_LOG } ani_space;
 
 typedef struct ani_prop_info {
     int ncomp;
@@ -66,6 +66,16 @@ bool ani_prop_valid(ani_target_kind kind, an_prop p);
 // Chaos at a time: the scene dial, and an object's effective chaos (scene dial x
 // the object multipliers from the top level down). Pure.
 double ani_scene_chaos_at(an_scene *s, ani_time at);
+
+// The camera at a time (docs/camera.md): position, zoom, rotation.
+typedef struct ani_camera {
+    an_vec2 pos;
+    float zoom, rot;
+} ani_camera;
+ani_camera ani_camera_at(an_scene *s, ani_time at);
+// An object's area scale on screen at a time: camera zoom x sqrt |det| of its
+// and its ancestors' scales (verb scales included once verbs exist).
+double ani_obj_area_scale_at(an_obj *o, ani_time at);
 double ani_obj_chaos_at(an_obj *o, ani_time at);
 
 typedef struct ani_track {

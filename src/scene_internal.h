@@ -94,6 +94,10 @@ struct an_scene {
     an_color background;
     an_rng rng;      // the scene's own stream (key ANI_RNG_SCENE_KEY)
     float chaos;     // BASE chaos dial (scene target), default 1
+    an_vec2 cam_pos; // BASE camera (docs/camera.md): position, zoom, rotation
+    float cam_zoom, cam_rot;
+    float max_zoom;  // curves are flattened for this scale on screen
+    float flatness;  // path flattening tolerance, local px: 0.2 / max_zoom
     an_style style;  // resolved: defaults applied (docs/layers.md)
     ani_channel *ch[AN_PROP_COUNT]; // scene-target tracks (only AN_PROP_CHAOS so far)
     ani_arena arena;

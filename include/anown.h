@@ -116,6 +116,9 @@ typedef struct an_scene_desc {
     uint64_t seed;       /* seeds the scene's RNG and grain; 0 is a valid seed */
     an_color background; /* paper color; alpha 0 (the zero value) means the palette's paper */
     an_style style;
+    float max_zoom;      /* largest scale on screen (camera zoom x object scales) the
+                            curves are flattened for; default 4. Past it, curves may
+                            show facets (one warning). docs/camera.md */
 } an_scene_desc;
 
 /* Returns NULL on allocation failure. */
@@ -421,6 +424,10 @@ typedef enum an_prop {
     AN_PROP_DRAW,         /* draw progress 0..1 along the path's arc length */
     AN_PROP_CHAOS,        /* 0..1. Scene target: the chaos dial. Objects: a multiplier
                              (default 1) applied down the tree. See docs/layers.md. */
+    /* scene target only: the camera (docs/camera.md) */
+    AN_PROP_CAMERA_POS,      /* the world point at the frame's center; default the scene's center */
+    AN_PROP_CAMERA_ZOOM,     /* screen px per world px; default 1; interpolated in log space */
+    AN_PROP_CAMERA_ROTATION, /* radians; turning the camera clockwise turns the world counter-clockwise */
     AN_PROP_COUNT
 } an_prop;
 
@@ -474,6 +481,22 @@ an_anim an_draw(an_obj *o, const an_anim_opts *opts);
 an_anim an_draw_to(an_obj *o, float progress, const an_anim_opts *opts);
 an_anim an_chaos_to(an_obj *o, float chaos, const an_anim_opts *opts);
 an_anim an_scene_chaos_to(an_scene *s, float chaos, const an_anim_opts *opts);
+
+/* The camera (docs/camera.md): the scene's view of its world. The paper,
+ * grain and vignette stay fixed to the frame. */
+an_anim an_camera_move_to(an_scene *s, an_vec2 pos, const an_anim_opts *opts);
+an_anim an_camera_zoom_to(an_scene *s, float zoom, const an_anim_opts *opts);
+an_anim an_camera_rotate_to(an_scene *s, float radians, const an_anim_opts *opts);
+void an_camera_set_pos(an_scene *s, an_vec2 pos);
+void an_camera_set_zoom(an_scene *s, float zoom);
+void an_camera_set_rotation(an_scene *s, float radians);
+
+typedef struct an_camera_state {
+    an_vec2 pos;    /* including any shake */
+    float zoom, rotation;
+} an_camera_state;
+/* The camera at the frame last passed to an_seek. */
+an_camera_state an_camera_get(const an_scene *s);
 
 /* Start at the cursor and move the cursor to the animation's end. */
 void an_play(an_scene *s, an_anim a);

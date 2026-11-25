@@ -7,7 +7,8 @@
 #include "arena_internal.h"
 
 // Flattening tolerance in local units: max distance between a curve and its
-// polyline. Fine enough for up to ~4x on-screen scaling without visible facets.
+// polyline. A scene flattens at 0.2 / max_zoom (docs/camera.md); this is the
+// value at the default max_zoom of 4.
 #define ANI_FLATNESS 0.05f
 
 typedef struct ani_subpath {
@@ -54,14 +55,14 @@ void ani_pb_close(ani_path_builder *b);
 ani_path *ani_pb_finish(ani_path_builder *b, ani_arena *a);
 
 // Convenience builders for the built-in shapes (local coordinates).
-ani_path *ani_path_segs(ani_arena *a, const an_seg *segs, int n);
+ani_path *ani_path_segs(ani_arena *a, const an_seg *segs, int n, float tol);
 ani_path *ani_path_rect(ani_arena *a, an_vec2 size);
-ani_path *ani_path_circle(ani_arena *a, float radius);
+ani_path *ani_path_circle(ani_arena *a, float radius, float tol);
 ani_path *ani_path_line(ani_arena *a, an_vec2 from, an_vec2 to);
 ani_path *ani_path_arrow(ani_arena *a, an_vec2 from, an_vec2 to, float head);
 
-// Point segments for a circle of this radius at ANI_FLATNESS (deterministic).
-int ani_circle_segments(float radius);
+// Point segments for a circle of this radius at tolerance tol (deterministic).
+int ani_circle_segments(float radius, float tol);
 
 // Position and unit tangent at global arc length s (clamped to [0, total]),
 // local coordinates. Also returns the subpath index and arc length within it.

@@ -340,14 +340,15 @@ static void set_shape_view(ani_renderer *r, const target_ctx *t, float alpha_mul
     shape_params_t p = { .alpha_mul = alpha_mul };
     if (t->index == ANI_TARGET_MAIN) {
         sg_apply_viewportf(r->vx, r->vy, r->vw, r->vh, true);
-        p.view[0] = 0;
-        p.view[1] = 0;
+        // the camera's translation (fast path, docs/camera.md) shifts every shape
+        p.view[0] = 0.0f - r->mesh.cam_dx;
+        p.view[1] = 0.0f - r->mesh.cam_dy;
         p.view[2] = r->sw;
         p.view[3] = r->sh;
     } else {
         sg_apply_viewport(0, 0, t->w, t->h, true);
-        p.view[0] = ((float)t->ox - r->vx) / r->k;
-        p.view[1] = ((float)t->oy - r->vy) / r->k;
+        p.view[0] = ((float)t->ox - r->vx) / r->k - r->mesh.cam_dx;
+        p.view[1] = ((float)t->oy - r->vy) / r->k - r->mesh.cam_dy;
         p.view[2] = (float)t->w / r->k;
         p.view[3] = (float)t->h / r->k;
     }
@@ -468,7 +469,7 @@ static void layer_bounds(ani_renderer *r) {
                 y1 = fmaxf(y1, (float)(ch->y + ch->h));
             } else if (c->paint != ANI_PAINT_STENCIL_CLEAR) {
                 for (int v = c->first; v < c->first + c->count; v++) {
-                    const float px = r->vx + m->v[v].x * r->k, py = r->vy + m->v[v].y * r->k;
+                    const float px = r->vx + (m->v[v].x + m->cam_dx) * r->k, py = r->vy + (m->v[v].y + m->cam_dy) * r->k;
                     x0 = fminf(x0, px);
                     y0 = fminf(y0, py);
                     x1 = fmaxf(x1, px);
@@ -523,6 +524,11 @@ bool ani_renderer_prepare(ani_renderer *r, const an_scene *s, int64_t frame, int
     }
     if (!ani_tess_scene(&r->mesh, s, frame)) return false;
     r->prof_tess = uptime_s();
+    if (!r->warned_zoom && r->mesh.max_screen_scale > s->max_zoom + 1e-4f) {
+        fprintf(stderr, "anown: an object reaches %.2fx on screen at frame %lld (max_zoom %g); curves may show facets\n",
+                (double)r->mesh.max_screen_scale, (long long)frame, (double)s->max_zoom);
+        r->warned_zoom = true;
+    }
     const ani_mesh *m = &r->mesh;
 
     // letterbox: fit the scene inside the target, centered, origin on whole pixels

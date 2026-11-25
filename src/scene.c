@@ -33,6 +33,10 @@ an_scene *an_scene_create(const an_scene_desc *desc) {
     static uint64_t next_serial = 0;
     s->serial = ++next_serial;
     s->chaos = 1.0f; // the look is on by default (docs/layers.md)
+    s->cam_pos = (an_vec2){ (float)s->width * 0.5f, (float)s->height * 0.5f };
+    s->cam_zoom = 1.0f;
+    s->max_zoom = d.max_zoom > 0.0f ? d.max_zoom : 4.0f;
+    s->flatness = 0.2f / s->max_zoom; // 0.05 at the default: the tolerance before max_zoom existed
     ani_arena_init(&s->arena, 0);
     s->root.kind = AN_KIND_GROUP;
     s->root.scene = s;
@@ -181,7 +185,7 @@ an_obj *an_circle(an_scene *s, const an_circle_opts *opts) {
     const an_circle_opts o = opts ? *opts : (an_circle_opts){ 0 };
     if (!s) return NULL;
     const float radius = o.radius > 0 ? o.radius : 50.0f;
-    ani_path *path = ani_path_circle(&s->arena, radius);
+    ani_path *path = ani_path_circle(&s->arena, radius, s->flatness);
     if (!path) return NULL;
     an_obj *c = with_path(ani_obj_make(s, AN_KIND_CIRCLE, ANI_COMMON(&o)), path, ani_outline_requested(o.stroke, o.stroke_width));
     if (c) c->u.circle.radius = radius;
@@ -220,7 +224,7 @@ an_obj *an_arrow(an_scene *s, const an_arrow_opts *opts) {
 an_obj *an_stroke(an_scene *s, const an_stroke_opts *opts) {
     const an_stroke_opts o = opts ? *opts : (an_stroke_opts){ 0 };
     if (!s) return NULL;
-    ani_path *path = ani_path_segs(&s->arena, o.segs, o.segs ? o.seg_count : 0);
+    ani_path *path = ani_path_segs(&s->arena, o.segs, o.segs ? o.seg_count : 0, s->flatness);
     if (!path) return NULL;
     return with_path(ani_obj_make(s, AN_KIND_STROKE, ANI_COMMON(&o)), path, true);
 }

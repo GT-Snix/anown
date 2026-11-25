@@ -729,3 +729,26 @@ clips, method and measures as the bitrate report; crops `out/bitrate/crops/*_g0.
   intact. CRF 21 saves another ~30% and still keeps the grain on text (corr
   0.93) but loses about a third of it during a chaos ramp. Master exports keep
   animated grain at CRF 12.
+
+## Camera, step 1: properties (2026-11-25)
+
+docs/camera.md is the spec. Works:
+- Camera pos / zoom / rotation on the scene target (`an_camera_move_to`,
+  `_zoom_to`, `_rotate_to`, setters, `an_camera_get`); zoom interpolates in log
+  space; the paper, grain and vignette stay on the frame.
+- The translation fast path: a camera with zoom 1 and rotation 0 is a per-draw
+  offset, so the tessellation cache keeps hitting while it pans (scenario 7:
+  median 6.2 ms vs 12.4 with the camera in the transforms; numbers in
+  docs/camera.md).
+- `an_scene_desc.max_zoom` (default 4): flattening at 0.2 / max_zoom px and
+  1 / (1000 max_zoom) em, the same as before at the default; the renderer warns
+  once when any drawn object's largest singular value on screen exceeds it
+  (spring overshoot included, since it's measured on rendered frames).
+- Text snapping only at an effective scale of exactly 1; the text size factor
+  includes the camera zoom (`an_obj_chaos` too).
+- Boil buckets coarsened by powers of two below a 6 px wavelength on screen,
+  from the scale at the start of the boil step.
+Tests: `tests/test_camera.c` (zoom vs riso offset in pixels, max_zoom,
+zooming into code text: no shadow, snapping off once and back, chaos 0.81 at
+3x; boil coarsening at 1, 0.4, 0.3, 0.1 and only at step frames); test_memo's
+scenes pan and zoom. 18 test programs pass; 60 reference PNGs byte-identical.

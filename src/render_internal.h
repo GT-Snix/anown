@@ -63,6 +63,7 @@ typedef struct ani_renderer {
     int nresolve, resolve_cap;
     size_t pool_bytes;
     bool warned_budget;
+    bool warned_zoom;        // max_zoom exceeded (warned once)
     size_t budget; // ANI_LAYER_BUDGET; tests may lower it
 
     // this frame

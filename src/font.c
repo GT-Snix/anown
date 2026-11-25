@@ -122,7 +122,8 @@ const ani_glyph *ani_font_glyph(an_font *f, int gi) {
     stbtt_vertex *v = NULL;
     const int n = stbtt_GetGlyphShape(&f->info, gi, &v);
     if (n > 0) {
-        const float tol = (float)f->upem * ANI_GLYPH_FLATNESS_EM;
+        // 1 / (1000 x max_zoom) em: 1/4000 at the default max_zoom (docs/camera.md)
+        const float tol = (float)f->upem / (1000.0f * f->scene->max_zoom);
         ani_path_builder b;
         ani_pb_init(&b);
         bool ok = true;

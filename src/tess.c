@@ -414,6 +414,18 @@ static an_color to_col(ani_value c) {
     return (an_color){ (float)c.v[0], (float)c.v[1], (float)c.v[2], (float)c.v[3] };
 }
 
+// Zoomed out, the bucket spacing on screen shrinks while the amplitude stays:
+// below 6 px the wobble turns to fuzz. Coarsen by the smallest power of two that
+// keeps it >= 6 px, from the object's scale at the START of the current boil
+// step, so it only changes when the boil re-rolls anyway (docs/camera.md, (c)).
+float ani_boil_spacing(const an_scene *s, an_obj *c, ani_time at) {
+    const int64_t step = (at.num * 12) / at.den;
+    const double sc = ani_obj_area_scale_at(c, (ani_time){ step, 12 });
+    float spacing = s->style.boil_spacing;
+    for (int k = 0; k < 10 && (double)spacing * sc < 6.0; k++) spacing *= 2.0f;
+    return spacing;
+}
+
 // The paint style of a drawable object at `at`, with effective chaos `chaos`.
 static emit_style sample_style(const an_scene *s, an_obj *c, float chaos, ani_time at) {
     const an_style *sty = &s->style;
@@ -437,9 +449,9 @@ static emit_style sample_style(const an_scene *s, an_obj *c, float chaos, ani_ti
     // boil: keyed by the object's RNG key, arc-length buckets, and a 12 Hz step
     // in integer math: (N * 12) / fps, so 24, 30 and 60 fps all step at 12 Hz
     if (!sty->boil_off && chaos > 0.0f) {
-        st.boil = (ani_boil){ .amp = sty->boil * chaos, .spacing = sty->boil_spacing,
-                              .seed = s->seed, .stream = c->rng_key,
-                              .step = (uint64_t)((at.num * 12) / at.den) };
+        const uint64_t step = (uint64_t)((at.num * 12) / at.den);
+        st.boil = (ani_boil){ .amp = sty->boil * chaos, .spacing = ani_boil_spacing(s, c, at),
+                              .seed = s->seed, .stream = c->rng_key, .step = step };
     }
     return st;
 }
@@ -480,15 +492,15 @@ typedef struct glyph_item {
 
 // One letter at `at`: size factor on chaos, snapping, style, draw progress.
 // Returns the effective chaos (for its children).
-static float sample_glyph(const an_scene *s, an_obj *c, ani_affine pw, ani_affine w, an_vec2 scale, float rot,
-                          float chaos, ani_time at, glyph_item *g) {
+static float sample_glyph(ani_mesh *m, const an_scene *s, an_obj *c, ani_affine pw, ani_affine w, an_vec2 scale,
+                          float rot, float chaos, ani_time at, glyph_item *g) {
     const an_style *sty = &s->style;
     const float wscale = sqrtf(fabsf(w.a * w.d - w.b * w.c));
     chaos *= ani_text_size_factor(c, wscale, sty->boil_off ? 0.0f : sty->boil);
     an_obj *text = c->u.glyph.text;
     const bool in_text = c->parent == text;
     // calm letters sit on whole pixels relative to the text's origin
-    if (chaos == 0.0f && in_text) ani_text_snap(pw, &w, c->u.glyph.pen, rot, scale);
+    if (chaos == 0.0f && in_text && ani_text_snap(pw, &w, c->u.glyph.pen, rot, scale)) m->snapped_letters++;
     *g = (glyph_item){ .o = c, .w = w, .pw = in_text ? pw : w };
     emit_style st = sample_style(s, c, chaos, at);
     const float rs = ani_text_riso_scale(c, wscale);
@@ -1082,9 +1094,14 @@ static bool visit_children(ani_mesh *m, const an_scene *s, const an_obj *parent,
         const an_vec2 scale = { (float)sc.v[0], (float)sc.v[1] };
         const ani_affine w = ani_affine_mul(
             pw, ani_local((an_vec2){ (float)pos.v[0], (float)pos.v[1] }, scale, (float)rot.v[0]));
+        if (c->path) { // drawn: its largest scale on screen (max_zoom, docs/camera.md)
+            const float sq = w.a * w.a + w.b * w.b + w.c * w.c + w.d * w.d, det = w.a * w.d - w.b * w.c;
+            const float sv = sqrtf(0.5f * (sq + sqrtf(fmaxf(sq * sq - 4.0f * det * det, 0.0f))));
+            if (sv > m->max_screen_scale) m->max_screen_scale = sv;
+        }
         if (c->kind == AN_KIND_GLYPH) {
             glyph_item g;
-            chaos = sample_glyph(s, c, pw, w, scale, (float)rot.v[0], chaos, at, &g);
+            chaos = sample_glyph(m, s, c, pw, w, scale, (float)rot.v[0], chaos, at, &g);
             // a letter fading on its own gets its own layer; outside a layer, so does
             // a translucent one that isn't in its text (a text isolates as a whole)
             const bool tr = (g.fill_on && g.st.fill.a < 1.0f) || (g.ink_on && g.st.stroke.a < 1.0f) ||
@@ -1148,13 +1165,27 @@ bool ani_tess_scene(ani_mesh *m, const an_scene *s, int64_t frame) {
     m->merge_barrier = true; // objects never extend the background run
     const ani_time at = ani_frame_time(s, frame);
     const float chaos = (float)ani_scene_chaos_at((an_scene *)s, at); // sampling only reads
+    // the camera: a pure translation becomes a per-draw offset; anything else is
+    // the root of every world transform
+    const ani_camera cam = ani_camera_at((an_scene *)s, at); // sampling only reads
+    ani_affine root = { 1, 0, 0, 1, 0, 0 };
+    m->cam_dx = m->cam_dy = 0.0f;
+    m->max_screen_scale = 0.0f;
+    m->snapped_letters = 0;
+    if (cam.zoom == 1.0f && cam.rot == 0.0f && !m->cam_fast_off) {
+        m->cam_dx = w * 0.5f - cam.pos.x;
+        m->cam_dy = h * 0.5f - cam.pos.y;
+    } else {
+        root = ani_affine_mul(ani_local((an_vec2){ w * 0.5f, h * 0.5f }, (an_vec2){ cam.zoom, cam.zoom }, -cam.rot),
+                              (ani_affine){ 1, 0, 0, 1, -cam.pos.x, -cam.pos.y });
+    }
     m->memo_hits = m->memo_misses = 0;
     if (!m->memo_off && !m->memo) {
         m->memo = calloc(1, sizeof *m->memo);
         if (!m->memo) return false;
     }
     if (m->memo) m->memo->stamp++;
-    if (!visit_children(m, s, &s->root, (ani_affine){ 1, 0, 0, 1, 0, 0 }, ANI_TARGET_MAIN, chaos, at)) return false;
+    if (!visit_children(m, s, &s->root, root, ANI_TARGET_MAIN, chaos, at)) return false;
     merge_runs(m);
     return true;
 }

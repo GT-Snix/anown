@@ -285,10 +285,11 @@ float ani_text_riso_scale(const an_obj *g, float wscale) {
 }
 
 bool ani_text_snap(ani_affine pw, ani_affine *w, an_vec2 pen, float rotation, an_vec2 scale) {
-    // only a translation times a positive uniform scale, all the way down
+    // only at an effective scale of exactly 1: the text's world transform is a
+    // pure translation and the letter isn't rotated or scaled (docs/camera.md, (b))
     const float a = pw.a;
-    if (!(a > 0.0f) || pw.b != 0.0f || pw.c != 0.0f || pw.d != a) return false;
-    if (rotation != 0.0f || scale.x != scale.y) return false;
+    if (a != 1.0f || pw.b != 0.0f || pw.c != 0.0f || pw.d != 1.0f) return false;
+    if (rotation != 0.0f || scale.x != 1.0f || scale.y != 1.0f) return false;
     const float sx = a * pen.x, sy = a * pen.y;
     w->tx += roundf(sx) - sx;
     w->ty += roundf(sy) - sy;

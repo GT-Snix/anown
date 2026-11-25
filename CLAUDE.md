@@ -130,6 +130,10 @@ Out of scope for v1: LaTeX, 3D, audio, a GUI editor, and scripting-language bind
     and shuffled order and under eviction; keep it passing, and break a key
     field on purpose when you change the key to see that it fails.
 
+17. **Git.** Commit when asked. **Never push without asking first**, every time:
+    approval for one push doesn't cover the next. The remote is
+    https://github.com/GT-Snix/anown (private).
+
 ## Build
 
 - One `Makefile`, no CMake. `make` builds the library, the examples and the tests.
