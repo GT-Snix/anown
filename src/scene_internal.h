@@ -87,7 +87,24 @@ struct an_obj {
         struct {
             an_obj **bars, **texts;
             int nlines, first_line;
+            an_obj *marker;          // an_code_marker, or NULL
+            float base0, pitch;      // line 1's baseline (block space), line pitch
+            float asc, desc, code_x, code_w, adv;
+            int current;             // script time: the last line an_code_goto recorded (0: none)
         } code;
+        // AN_KIND_ARRAY (docs/explainer.md)
+        struct {
+            int n;
+            an_obj **elems;          // element groups, by element index
+            an_obj **cells;          // their cell / bar rects
+            int *perm;               // script time: slot -> element index (swaps played so far)
+            int64_t *busy;           // script time: per slot, the end tick of the last swap on it
+            float *slot_x;           // slot centers (array space)
+            float *height;           // per element: cell height, or bar height
+            an_vec2 cell;
+            an_array_style style;
+            an_color fill;           // the array's cell fill (unhighlight goes back to it)
+        } array;
     } u;
 };
 

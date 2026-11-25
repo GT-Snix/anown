@@ -130,7 +130,8 @@ typedef struct text_style {
     an_brush brush;
     an_toggle riso, shadow;
     an_pattern pattern;
-    bool paper_under, hidden, undrawn;
+    an_toggle paper_under;
+    bool hidden, undrawn;
 } text_style;
 
 typedef struct text_params {

@@ -136,7 +136,7 @@ an_obj *ani_obj_make(an_scene *s, an_kind kind, const ani_common_opts *c) {
     o->riso = c->riso;
     o->shadow = c->shadow;
     o->pattern = c->pattern;
-    o->paper_under = c->paper_under;
+    o->paper_under = c->paper_under == AN_ON; // AUTO is off for plain objects
     if (!(o->pattern.size > 0.0f)) o->pattern.size = 12.0f;
     if (!(o->pattern.density > 0.0f)) o->pattern.density = 0.5f;
     if (o->pattern.density > 1.0f) o->pattern.density = 1.0f;

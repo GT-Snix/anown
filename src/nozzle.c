@@ -7,7 +7,7 @@
 
 // World transform at `at`: sampled local transforms (verb transform included)
 // from the top level down. In world coordinates: the camera isn't applied.
-static ani_affine world_at(an_obj *o, ani_time at) {
+ani_affine ani_obj_world_at(an_obj *o, ani_time at) {
     if (!o->parent) return (ani_affine){ 1, 0, 0, 1, 0, 0 };
     const ani_value pos = ani_sample(ani_obj_prop(o, AN_PROP_POS), at);
     const ani_value sc = ani_sample(ani_obj_prop(o, AN_PROP_SCALE), at);
@@ -18,7 +18,7 @@ static ani_affine world_at(an_obj *o, ani_time at) {
     const ani_affine local = ani_verb_local(
         ani_local((an_vec2){ (float)pos.v[0], (float)pos.v[1] }, (an_vec2){ (float)sc.v[0], (float)sc.v[1] }, (float)rot.v[0]),
         (an_vec2){ (float)vs.v[0], (float)vs.v[1] }, (float)vr.v[0], (an_vec2){ (float)vp.v[0], (float)vp.v[1] });
-    return ani_affine_mul(world_at(o->parent, at), local);
+    return ani_affine_mul(ani_obj_world_at(o->parent, at), local);
 }
 
 an_nozzle an_obj_nozzle(const an_obj *o) {
@@ -28,7 +28,7 @@ an_nozzle an_obj_nozzle(const an_obj *o) {
 
     ani_value dp; // d(progress)/dt, analytic, from the draw track's easing
     const double p = ani_sample_vel(ani_obj_prop(m, AN_PROP_DRAW), at, &dp).v[0];
-    const ani_affine w = world_at(m, at);
+    const ani_affine w = ani_obj_world_at(m, at);
 
     const double s = p * o->path->total;
     an_vec2 lp, lt;

@@ -812,3 +812,33 @@ first.
   2.9–3.3 s with the cache, 4.3–4.6 s cold. That keeps the 5 s budget without
   splitting any of our files (the largest, offscreen.m at 0.63 s, isn't on the
   critical path). `make clean-cache` drops it.
+
+## Explainer objects, 1: arc track and array / bars (2026-11-25)
+
+docs/explainer.md is the spec (its doc diff against the first proposal is in
+`out/explainer_doc.diff`).
+- `an_move_arc`: a pos track along a cubic Bézier with end tangents along the
+  chord's upward normal; position = the curve at the eased progress; the last
+  frame is exactly the target; a linear ease inherits the channel's velocity.
+- `.paper_under` is now an `an_toggle` (AUTO / ON / OFF), like `.riso` and
+  `.shadow`; AUTO is off except for patterned array cells. `= true` still
+  compiles (AN_ON is 1); reference frames byte-identical.
+- `an_array` (cells or bars): one group of element groups (cell/bar + value
+  label) and index labels; `an_array_item` / `_cell` / `_slot_pos`;
+  `an_array_highlight` / `_unhighlight` (fill tracks); `an_array_swap`: lifted
+  arcs, both at or above the row, so nothing touches and nothing crosses the
+  labels below; heights scale with distance and clamp to the frame (warning).
+  Script-time slot permutation updated when a swap is played.
+- Found while implementing (both in the doc): sliding the lower element along
+  the row passed it through the elements in between (fixed: both arc above);
+  plain Bézier arcs grazed touching neighbors by a fraction of the swap
+  distance, 4 px measured on a two-slot swap (fixed: lifted arcs, no travel
+  until clear).
+Tests (`tests/test_explainer.c`): arc midpoint by the Bézier formula (and
+downward / vertical arcs), exact end, velocity carried over by a linear
+take-over; array layout, bar heights; swap midpoint heights by hand (249.02 /
+144), exact ends, zero overlap at every frame, nothing below the row, seek order;
+seeking into the middle of a swap = the sequential render; highlight follows its
+element through a swap; the array fades as one layer with no seam;
+paper_under default. Breaking the lift or the permutation fails them. 19 test
+programs pass.

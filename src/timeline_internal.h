@@ -80,6 +80,12 @@ an_vec2 ani_shake_at(const an_scene *s, ani_time at);
 // An object's area scale on screen at a time: camera zoom x sqrt |det| of its
 // and its ancestors' scales (verb scales included once verbs exist).
 double ani_obj_area_scale_at(an_obj *o, ani_time at);
+// Record an an_anim at `start` (what an_play does, without moving the cursor).
+int64_t ani_record_anim(an_scene *s, const an_anim *a, int64_t start);
+// array.c: the tracks of an_array_swap (docs/explainer.md).
+int64_t ani_array_record_swap(an_scene *s, const an_anim *a, int64_t start);
+// An object's world transform at a time (without the camera), from the top down.
+struct ani_affine ani_obj_world_at(an_obj *o, ani_time at);
 // Seconds from a spring's start (at rest) until it first reaches its target;
 // -1 for a critically damped spring (docs/camera.md, the slap's impact).
 double ani_spring_first_arrival(an_ease e);
@@ -92,6 +98,15 @@ typedef struct ani_track {
     ani_value from, to, v0;  // interp space; v0 in interp units per second
     ani_value from_natural;  // exact natural start value
     ani_value to_natural;    // exact natural end value
+    // an_move_arc (docs/explainer.md): a cubic Bezier from -> c1 -> c2 -> to at the
+    // eased progress, instead of a straight line (2 components, linear space)
+    bool arc;
+    ani_value c1, c2;
+    // a lifted arc (array swaps): rise along the normal until the eased progress
+    // reaches lift (no travel), travel as a smoothstep over [lift, 1 - lift], land.
+    // Height profile 4 H u (1 - u) along the normal, H = arc height. 0: plain Bezier.
+    double lift, height;
+    double nx, ny;
 } ani_track;
 
 struct ani_channel {
@@ -112,6 +127,14 @@ ani_value ani_sample_vel(ani_prop_ref ref, ani_time at, ani_value *velocity);
 // If `from` is given, the track starts there (natural space) at rest, instead of
 // continuing from the channel.
 // Returns the track's end in ticks.
+// The same, along an arc of `height` (docs/explainer.md, an_move_arc): pos-like
+// 2-component linear properties only. A spring ease is treated as in-out.
+int64_t ani_record_arc(an_scene *s, ani_prop_ref ref, int64_t start, int64_t duration, an_ease ease,
+                       ani_value to, double height);
+// A lifted arc (docs/explainer.md, swaps): no travel while the eased progress is
+// below `lift` (or above 1 - lift), height profile 4 H u (1 - u).
+int64_t ani_record_lift(an_scene *s, ani_prop_ref ref, int64_t start, int64_t duration, an_ease ease,
+                        ani_value to, double height, double lift);
 int64_t ani_record(an_scene *s, ani_prop_ref ref, int64_t start, int64_t duration,
                    an_ease ease, ani_value value, bool relative, const ani_value *from);
 

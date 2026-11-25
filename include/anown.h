@@ -138,6 +138,7 @@ typedef enum an_kind {
     AN_KIND_STROKE,
     AN_KIND_GLYPH, /* one letter of a text (an_text_glyph) */
     AN_KIND_CODE,  /* a code block (an_code): a group of lines */
+    AN_KIND_ARRAY, /* an array / bar visualizer (an_array): a group of elements */
 } an_kind;
 
 typedef struct an_obj an_obj;
@@ -188,9 +189,10 @@ typedef struct an_brush {
     an_toggle riso;     /* fill offset: AUTO = only if the object has ink */ \
     an_toggle shadow;   /* hard shadow: AUTO = the scene default (style) */ \
     an_pattern pattern; /* fill pattern; zero = solid */                    \
-    bool paper_under;   /* fill the silhouette with the scene background    \
+    an_toggle paper_under; /* fill the silhouette with the scene background \
                            color first, so pattern gaps and the riso sliver \
-                           hide what's beneath (docs/layers.md) */
+                           hide what's beneath (docs/layers.md). AUTO: off, \
+                           except array cells with a pattern fill */
 
 /* Axis-aligned rectangle centered on pos. */
 typedef struct an_rect_opts {
@@ -470,7 +472,9 @@ typedef struct an_verb_opts {
     float impact_shake_duration; /* 0: 0.5 s */
 } an_verb_opts;
 
-typedef enum an_verb_kind { AN_VERB_NONE = 0, AN_VERB_SLAP, AN_VERB_POP, AN_VERB_SQUASH } an_verb_kind;
+/* What an an_anim records when played: one track (NONE), or several (the verbs,
+ * and an_array_swap). */
+typedef enum an_verb_kind { AN_VERB_NONE = 0, AN_VERB_SLAP, AN_VERB_POP, AN_VERB_SQUASH, AN_VERB_SWAP } an_verb_kind;
 
 typedef struct an_anim {
     an_obj *obj;
@@ -483,6 +487,9 @@ typedef struct an_anim {
     an_anim_opts opts;
     an_verb_kind verb;     /* a verb: records its own tracks (and impact shake) */
     an_verb_opts verb_opts;
+    float arc_height;      /* an_move_arc: the arc's height (0: a straight track) */
+    bool arc;
+    int swap_i, swap_j;    /* an_array_swap: the slots */
 } an_anim;
 
 an_anim an_move_to(an_obj *o, an_vec2 to, const an_anim_opts *opts);
@@ -500,6 +507,12 @@ an_anim an_stroke_width_to(an_obj *o, float width, const an_anim_opts *opts);
 an_anim an_draw(an_obj *o, const an_anim_opts *opts);
 /* Draw progress to a value, continuing from wherever it is (take-over). */
 an_anim an_draw_to(an_obj *o, float progress, const an_anim_opts *opts);
+/* Move along an arc (docs/explainer.md): a cubic Bezier whose end tangents are
+ * perpendicular to the chord, peaking `height` px up the screen (negative:
+ * the other way). Position = the curve at the eased progress; the last frame is
+ * exactly `to`. A linear ease inherits the channel's velocity at the start;
+ * eased tracks start at rest. Springs are treated as in-out. */
+an_anim an_move_arc(an_obj *o, an_vec2 to, float height, const an_anim_opts *opts);
 an_anim an_chaos_to(an_obj *o, float chaos, const an_anim_opts *opts);
 an_anim an_scene_chaos_to(an_scene *s, float chaos, const an_anim_opts *opts);
 
@@ -536,6 +549,43 @@ an_anim an_shake(an_scene *s, float intensity, const an_anim_opts *opts);
 an_anim an_slap(an_obj *o, const an_verb_opts *opts);
 an_anim an_pop(an_obj *o, const an_verb_opts *opts);
 an_anim an_squash_stretch(an_obj *o, const an_verb_opts *opts);
+
+/* ---- explainer objects (docs/explainer.md) ------------------------------ */
+
+typedef enum an_array_style { AN_ARRAY_CELLS = 0, AN_ARRAY_BARS } an_array_style;
+
+/* An array or bar chart. One group: an element group per value (its cell or
+ * bar, and its value label), and index labels fixed under the slots. Touching
+ * cells fade as one layer (fade the array, rule 13); highlights are fill
+ * tracks, never opacity. Fading a single cell of a touching array seams. */
+typedef struct an_array_opts {
+    AN_OBJ_FIELDS          /* pos: the row's center (cells) or baseline center (bars);
+                              fill: cell fill (alpha 0: palette accent a);
+                              stroke / stroke_width: outlines (default ink, 5);
+                              pattern: cell pattern; paper_under: AUTO = on if patterned */
+    const int *values;     /* copied */
+    int count;
+    an_array_style style;
+    an_vec2 cell;          /* cells: size (default {96, 96}); bars: width and the height of
+                              the largest value (default {56, 320}) */
+    float gap;             /* between slots; default 0 for cells, 12 for bars */
+    bool index_labels;
+    bool no_values;
+    an_font *font;         /* labels; NULL: an_font_mono */
+} an_array_opts;
+
+an_obj *an_array(an_scene *s, const an_array_opts *opts);
+/* The element (cell or bar group) in `slot`, as of the swaps played so far. */
+an_obj *an_array_item(const an_obj *arr, int slot);
+/* The cell or bar rect of the element in `slot` (for fill and stroke tracks). */
+an_obj *an_array_cell(const an_obj *arr, int slot);
+/* A slot's center (cells) or baseline point (bars), in the array's space. */
+an_vec2 an_array_slot_pos(const an_obj *arr, int slot);
+/* Swap two slots' elements: one arcs over, the other slides under; both land
+ * with a small squash. Default 0.9 s, ease in-out. */
+an_anim an_array_swap(an_obj *arr, int i, int j, const an_anim_opts *opts);
+an_anim an_array_highlight(an_obj *arr, int slot, an_color fill, const an_anim_opts *opts);
+an_anim an_array_unhighlight(an_obj *arr, int slot, const an_anim_opts *opts);
 
 /* Start at the cursor and move the cursor to the animation's end. */
 void an_play(an_scene *s, an_anim a);

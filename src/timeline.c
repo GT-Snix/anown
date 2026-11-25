@@ -176,6 +176,31 @@ static void eval_running(const ani_track *t, int ncomp, double elapsed, ani_valu
     const double u = elapsed / dur;
     const double e = ani_ease_value(t->ease.kind, u);
     const double de = ani_ease_deriv(t->ease.kind, u);
+    if (t->arc && t->lift > 0.0) { // lift: travel only over [lift, 1 - lift]
+        const double L = t->lift, span = 1.0 - 2.0 * L;
+        double k = (e - L) / span, dk = 1.0 / span;
+        if (k <= 0.0) { k = 0.0; dk = 0.0; }
+        if (k >= 1.0) { k = 1.0; dk = 0.0; }
+        const double S = k * k * (3.0 - 2.0 * k), dS = 6.0 * k * (1.0 - k) * dk;
+        const double hgt = 4.0 * t->height * e * (1.0 - e), dh = 4.0 * t->height * (1.0 - 2.0 * e);
+        const double nn[2] = { t->nx, t->ny };
+        for (int c = 0; c < 2; c++) {
+            const double span_c = t->to.v[c] - t->from.v[c];
+            val->v[c] = t->from.v[c] + span_c * S + nn[c] * hgt;
+            vel->v[c] = (span_c * dS + nn[c] * dh) * de / dur;
+        }
+        return;
+    }
+    if (t->arc) { // B(e) and B'(e) e' / dur
+        const double a = 1.0 - e;
+        for (int c = 0; c < 2; c++) {
+            const double p0 = t->from.v[c], p1 = t->c1.v[c], p2 = t->c2.v[c], p3 = t->to.v[c];
+            val->v[c] = a * a * a * p0 + 3.0 * a * a * e * p1 + 3.0 * a * e * e * p2 + e * e * e * p3;
+            const double db = 3.0 * a * a * (p1 - p0) + 6.0 * a * e * (p2 - p1) + 3.0 * e * e * (p3 - p2);
+            vel->v[c] = db * de / dur;
+        }
+        return;
+    }
     for (int c = 0; c < ncomp; c++) {
         const double span = t->to.v[c] - t->from.v[c];
         val->v[c] = t->from.v[c] + span * e;
@@ -282,10 +307,12 @@ static bool insert(an_scene *s, ani_prop_ref ref, const ani_track *t) {
     return true;
 }
 
-int64_t ani_record(an_scene *s, ani_prop_ref ref, int64_t start, int64_t duration,
-                   an_ease ease, ani_value value, bool relative, const ani_value *from) {
+static int64_t record_track(an_scene *s, ani_prop_ref ref, int64_t start, int64_t duration, an_ease ease,
+                            ani_value value, bool relative, const ani_value *from, const double *arc_height,
+                            double lift) {
     const ani_prop_info *pi = ani_prop_info_of(ref.prop);
     ani_track t = { .start = start, .seq = ++s->seq, .ease = ease };
+    ani_value inherited = { { 0 } }; // the channel's velocity at the start (arcs inherit it)
 
     if (from) {
         // explicit start (e.g. an_draw always starts at 0): a deliberate jump, at rest
@@ -317,6 +344,7 @@ int64_t ani_record(an_scene *s, ani_prop_ref ref, int64_t start, int64_t duratio
         }
         // only springs carry momentum; eased tracks start at rest by definition
         t.v0 = (ease.kind == AN_EASE_KIND_SPRING) ? vel : (ani_value){ { 0 } };
+        inherited = vel;
     }
 
     if (relative && pi->space == ANI_SPACE_LINEAR) { // (log space: relative isn't offered)
@@ -349,6 +377,40 @@ int64_t ani_record(an_scene *s, ani_prop_ref ref, int64_t start, int64_t duratio
         duration = (int64_t)ceil(settle * (double)ANI_TICKS_PER_SEC);
     }
     t.duration = duration;
+
+    if (arc_height) {
+        // P1 = P0 + n c, P2 = P3 + n c, c = 4 h / 3 (peak h); n: the chord's normal
+        // pointing up the screen (y < 0), or -x for a vertical chord
+        const double dx = t.to.v[0] - t.from.v[0], dy = t.to.v[1] - t.from.v[1];
+        const double len = sqrt(dx * dx + dy * dy);
+        double nx = 0.0, ny = -1.0;
+        if (len > 0.0) {
+            nx = dy / len;
+            ny = -dx / len;
+            if (ny > 0.0 || (ny == 0.0 && nx > 0.0)) {
+                nx = -nx;
+                ny = -ny;
+            }
+        }
+        const double c = 4.0 * *arc_height / 3.0;
+        t.arc = true;
+        t.c1 = (ani_value){ { t.from.v[0] + nx * c, t.from.v[1] + ny * c } };
+        t.c2 = (ani_value){ { t.to.v[0] + nx * c, t.to.v[1] + ny * c } };
+        // take-over: a linear ease (u'(0) = 1) inherits the channel's velocity as
+        // the start tangent; eased tracks start at rest (docs/timeline.md)
+        if (ease.kind == AN_EASE_KIND_LINEAR && duration > 0) {
+            const double secs = (double)duration / (double)ANI_TICKS_PER_SEC;
+            t.c1.v[0] += inherited.v[0] * secs / 3.0;
+            t.c1.v[1] += inherited.v[1] * secs / 3.0;
+        }
+        t.v0 = (ani_value){ { 0 } };
+        if (lift > 0.0) {
+            t.lift = lift < 0.5 ? lift : 0.499;
+            t.height = *arc_height;
+            t.nx = nx;
+            t.ny = ny;
+        }
+    }
 
     if (!insert(s, ref, &t)) {
         fprintf(stderr, "anown: out of memory recording a track\n");
@@ -423,10 +485,39 @@ an_anim an_fill_to(an_obj *o, an_color c, const an_anim_opts *op) { return anim(
 an_anim an_stroke_to(an_obj *o, an_color c, const an_anim_opts *op) { return anim(o, AN_PROP_STROKE, false, c.r, c.g, c.b, c.a, op); }
 an_anim an_stroke_width_to(an_obj *o, float w, const an_anim_opts *op) { return anim(o, AN_PROP_STROKE_WIDTH, false, w, 0, 0, 0, op); }
 an_anim an_draw_to(an_obj *o, float p, const an_anim_opts *op) { return anim(o, AN_PROP_DRAW, false, p, 0, 0, 0, op); }
+an_anim an_move_arc(an_obj *o, an_vec2 to, float height, const an_anim_opts *op) {
+    an_anim a = anim(o, AN_PROP_POS, false, to.x, to.y, 0, 0, op);
+    a.arc = true;
+    a.arc_height = height;
+    return a;
+}
 an_anim an_draw(an_obj *o, const an_anim_opts *op) {
     an_anim a = anim(o, AN_PROP_DRAW, false, 1, 0, 0, 0, op);
     a.has_from = true; // from[] is zero: always starts at 0
     return a;
+}
+
+int64_t ani_record(an_scene *s, ani_prop_ref ref, int64_t start, int64_t duration, an_ease ease, ani_value value,
+                   bool relative, const ani_value *from) {
+    return record_track(s, ref, start, duration, ease, value, relative, from, NULL, 0.0);
+}
+
+int64_t ani_record_arc(an_scene *s, ani_prop_ref ref, int64_t start, int64_t duration, an_ease ease, ani_value to,
+                       double height) {
+    if (ease.kind == AN_EASE_KIND_SPRING) {
+        static bool warned = false; // a script-time message, not render state
+        if (!warned) fprintf(stderr, "anown: an_move_arc: springs aren't supported on arcs; using ease in-out\n");
+        warned = true;
+        ease = AN_EASE_IN_OUT;
+        if (duration < 0) duration = ANI_TICKS_PER_SEC;
+    }
+    return record_track(s, ref, start, duration, ease, to, false, NULL, &height, 0.0);
+}
+
+int64_t ani_record_lift(an_scene *s, ani_prop_ref ref, int64_t start, int64_t duration, an_ease ease, ani_value to,
+                        double height, double lift) {
+    if (ease.kind == AN_EASE_KIND_SPRING) ease = AN_EASE_IN_OUT;
+    return record_track(s, ref, start, duration, ease, to, false, NULL, &height, lift > 1e-6 ? lift : 1e-6);
 }
 
 // ---- camera shake (docs/camera.md) ---------------------------------------------------
@@ -552,7 +643,7 @@ an_anim an_pop(an_obj *o, const an_verb_opts *opts) { return verb(o, AN_VERB_POP
 an_anim an_squash_stretch(an_obj *o, const an_verb_opts *opts) { return verb(o, AN_VERB_SQUASH, opts); }
 
 // Record `a` starting at `start`; returns its end (or start if it can't run).
-static int64_t record_anim(an_scene *s, const an_anim *a, int64_t start) {
+int64_t ani_record_anim(an_scene *s, const an_anim *a, int64_t start) {
     if (!s) return start;
     // the target: an object, or the scene itself
     ani_prop_ref ref;
@@ -569,24 +660,26 @@ static int64_t record_anim(an_scene *s, const an_anim *a, int64_t start) {
     }
     if (!ani_prop_valid(ref.kind, a->prop)) return start;
     if (a->prop == AN_PROP_CAMERA_SHAKE) return record_shake(s, start, a->opts.duration > 0.0f ? a->opts.duration : 0.5f, a->value[0]);
+    if (a->verb == AN_VERB_SWAP && a->obj) return ani_array_record_swap(s, a, start);
     if (a->verb != AN_VERB_NONE && a->obj) return record_verb(s, a, start);
     const bool spring = a->opts.ease.kind == AN_EASE_KIND_SPRING;
     int64_t duration = ani_ticks(a->opts.duration);
     if (duration == 0) duration = spring ? -1 : ANI_TICKS_PER_SEC;
     const ani_value v = { { a->value[0], a->value[1], a->value[2], a->value[3] } };
     const ani_value from = { { a->from[0], a->from[1], a->from[2], a->from[3] } };
+    if (a->arc && a->prop == AN_PROP_POS) return ani_record_arc(s, ref, start, duration, a->opts.ease, v, a->arc_height);
     return ani_record(s, ref, start, duration, a->opts.ease, v, a->relative,
                       a->has_from ? &from : NULL);
 }
 
 void an_play(an_scene *s, an_anim a) {
     if (!s) return;
-    const int64_t end = record_anim(s, &a, s->cursor);
+    const int64_t end = ani_record_anim(s, &a, s->cursor);
     if (end > s->cursor) s->cursor = end;
 }
 
 void an_play_async(an_scene *s, an_anim a) {
-    if (s) record_anim(s, &a, s->cursor);
+    if (s) ani_record_anim(s, &a, s->cursor);
 }
 
 void an_wait(an_scene *s, float seconds) {
@@ -602,7 +695,7 @@ void an_stagger(an_scene *s, int n, const an_anim *anims, float gap_seconds) {
     const int64_t gap = ani_ticks(gap_seconds);
     int64_t latest = s->cursor;
     for (int i = 0; i < n; i++) {
-        const int64_t end = record_anim(s, &anims[i], s->cursor + (int64_t)i * gap);
+        const int64_t end = ani_record_anim(s, &anims[i], s->cursor + (int64_t)i * gap);
         if (end > latest) latest = end;
     }
     s->cursor = latest;

@@ -62,11 +62,13 @@ $(BUILD)/obj/%.o: src/%.m
 # Vendor objects (sokol, stb) are the slowest compiles (2.4 s and 1.0 s) and
 # change only when the vendored headers do. They're cached in .vendor-cache/
 # (gitignored, outside build/, so make clean keeps it) under a key hashing the
-# impl file, the vendor headers and the flags: a clean build copies them; any
-# change to those inputs compiles (and caches) a new one.
+# impl file, the vendor headers, the compiler's version line and the flags: a
+# clean build copies them; any change to those inputs compiles (and caches) a
+# new one.
 VENDOR_CACHE := .vendor-cache
-SOKOL_KEY := $(shell (cat src/sokol_impl.m vendor/sokol/*.h; echo '$(CC) $(OBJCFLAGS)') | shasum | cut -c1-16)
-STB_KEY   := $(shell (cat src/stb_impl.c vendor/stb/*.h; echo '$(CC) $(CFLAGS)') | shasum | cut -c1-16)
+CC_VERSION := $(shell $(CC) --version 2>/dev/null | head -1)
+SOKOL_KEY := $(shell (cat src/sokol_impl.m vendor/sokol/*.h; echo '$(CC_VERSION) | $(CC) $(OBJCFLAGS)') | shasum | cut -c1-16)
+STB_KEY   := $(shell (cat src/stb_impl.c vendor/stb/*.h; echo '$(CC_VERSION) | $(CC) $(CFLAGS)') | shasum | cut -c1-16)
 
 $(BUILD)/obj/sokol_impl.o: src/sokol_impl.m $(wildcard vendor/sokol/*.h)
 	@mkdir -p $(dir $@) $(VENDOR_CACHE)
