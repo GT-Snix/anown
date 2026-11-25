@@ -167,6 +167,49 @@ static void test_states(void) {
     an_scene_destroy(s);
 }
 
+// ---- layouts -------------------------------------------------------------------------------------
+
+#define POS(v, X, Y) CHECK((v).x == (float)(X) && (v).y == (float)(Y))
+
+// The BST of 5 3 8 1 4 7 9 (index = insertion order). In-order: 1 3 4 5 7 8 9, ranks
+// 0..6; the root (5) has rank 3. Spacing (80, 100): x = (rank - 3) x 80:
+//   5 (0, 0); 3 (-160, 100); 8 (160, 100); 1 (-240, 200); 4 (-80, 200); 7 (80, 200); 9 (240, 200)
+// A lone right child: 5 then 7: 7 at (80, 100).
+// n-ary: 0 has children 1, 2, 3; 1 has 4, 5. Leaves in pre-order: 4 slot 0, 5 slot 1,
+// 2 slot 2, 3 slot 3; 1 = (0 + 1) / 2 = 0.5; 0 = (0.5 + 3) / 2 = 1.75. Spacing 100:
+//   0 (0, 0); 1 (-125, 100); 2 (25, 100); 3 (125, 100); 4 (-175, 200); 5 (-75, 200)
+static void test_layout_tree(void) {
+    const an_tree_node bst[7] = { { -1, 0 }, { 0, -1 }, { 0, 1 }, { 1, -1 }, { 1, 1 }, { 2, -1 }, { 2, 1 } };
+    an_vec2 p[7];
+    CHECK(an_layout_tree(bst, 7, (an_vec2){ 80, 100 }, p));
+    POS(p[0], 0, 0); POS(p[1], -160, 100); POS(p[2], 160, 100); POS(p[3], -240, 200);
+    POS(p[4], -80, 200); POS(p[5], 80, 200); POS(p[6], 240, 200);
+    CHECK(an_layout_tree((an_tree_node[]){ { -1, 0 }, { 0, 1 } }, 2, (an_vec2){ 80, 100 }, p));
+    POS(p[0], 0, 0); POS(p[1], 80, 100);
+    const an_tree_node nary[6] = { { -1, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 1, 0 }, { 1, 0 } };
+    CHECK(an_layout_tree(nary, 6, (an_vec2){ 100, 100 }, p));
+    POS(p[0], 0, 0); POS(p[1], -125, 100); POS(p[2], 25, 100); POS(p[3], 125, 100);
+    POS(p[4], -175, 200); POS(p[5], -75, 200);
+    // bad input: two roots; two left children; a cycle not reaching the root
+    CHECK(!an_layout_tree((an_tree_node[]){ { -1, 0 }, { -1, 0 } }, 2, (an_vec2){ 1, 1 }, p));
+    CHECK(!an_layout_tree((an_tree_node[]){ { -1, 0 }, { 0, -1 }, { 0, -1 } }, 3, (an_vec2){ 1, 1 }, p));
+    CHECK(!an_layout_tree((an_tree_node[]){ { -1, 0 }, { 2, 1 }, { 1, 1 } }, 3, (an_vec2){ 1, 1 }, p));
+}
+
+// Layered: edges 0->3, 1->2, 2->4, 3->4, and 4->0 (closes a cycle: ignored).
+// Layers: 0, 1 in 0; 2, 3 in 1; 4 in 2. Start in index order: [0 1], [2 3], [4].
+// Sweep 1 (down): layer 1: bary(2) = pos(1) = 1, bary(3) = pos(0) = 0 -> [3 2];
+//   layer 2: bary(4) = (pos 3 + pos 2) / 2 = 0.5 -> [4].
+// Sweep 2 (up): layer 1: bary(3) = bary(2) = pos(4) = 0: tie, previous order -> [3 2];
+//   layer 0: bary(0) = pos(3) = 0, bary(1) = pos(2) = 1 -> [0 1]. Nothing moves after.
+// Spacing (100, 100), centered: 0 (-50, 0), 1 (50, 0), 3 (-50, 100), 2 (50, 100), 4 (0, 200).
+static void test_layout_layered(void) {
+    const int e[5][2] = { { 0, 3 }, { 1, 2 }, { 2, 4 }, { 3, 4 }, { 4, 0 } };
+    an_vec2 p[5];
+    CHECK(an_layout_layered(5, e, 5, (an_vec2){ 100, 100 }, p));
+    POS(p[0], -50, 0); POS(p[1], 50, 0); POS(p[3], -50, 100); POS(p[2], 50, 100); POS(p[4], 0, 200);
+}
+
 int main(void) {
     if (!ani_gfx_setup_headless()) {
         fprintf(stderr, "test_graph: headless Metal setup failed\n");
@@ -180,6 +223,8 @@ int main(void) {
     test_edge_pixels();
     test_edge_cache();
     test_states();
+    test_layout_tree();
+    test_layout_layered();
 
     free(g_px);
     ani_renderer_shutdown(&g_r);

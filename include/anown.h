@@ -735,6 +735,21 @@ typedef struct an_edge_opts {
 } an_edge_opts;
 an_obj *an_edge(an_scene *s, const an_edge_opts *opts);
 
+/* Layouts (docs/graphs.md): pure, deterministic, at script time. They fill
+ * out[n] with positions relative to the root (tree) or the top middle (layered);
+ * apply them as base positions or as moves. False (and a message) on bad input.
+ * Tree: binary if every non-root node has a side (in-order rank x spacing.x,
+ * depth x spacing.y), else n-ary (leaves in pre-order, parents centered over
+ * their first and last child; children in index order).
+ * Layered (DAGs): edges {from, to}; an edge that would close a cycle is ignored
+ * (index order); layer = longest path from a source; 8 barycenter sweeps. */
+typedef struct an_tree_node {
+    int parent;            /* -1: the root */
+    int side;              /* -1 left, +1 right; 0: n-ary (index order among siblings) */
+} an_tree_node;
+bool an_layout_tree(const an_tree_node *nodes, int n, an_vec2 spacing, an_vec2 *out);
+bool an_layout_layered(int n, const int (*edges)[2], int m, an_vec2 spacing, an_vec2 *out);
+
 /* Node and edge states: the array's four (an_cell_state). An edge's state sets
  * its stroke color (and width: 1.5x for ACTIVE and DONE). Default 0.3 s. */
 an_anim an_node_set_state(an_obj *node, an_cell_state state, const an_anim_opts *opts);

@@ -64,8 +64,8 @@ creation) or as moves (`an_move_to` in an `an_par`), so a layout can animate.
 ```c
 typedef struct an_tree_node { int parent; int side; } an_tree_node; /* parent -1: root; side
                                     -1 left, +1 right, 0 n-ary order (index order) */
-void an_layout_tree(const an_tree_node *nodes, int n, an_vec2 spacing, an_vec2 *out);
-void an_layout_layered(int n, const int (*edges)[2], int m, an_vec2 spacing, an_vec2 *out);
+bool an_layout_tree(const an_tree_node *nodes, int n, an_vec2 spacing, an_vec2 *out);   /* false: not a tree */
+bool an_layout_layered(int n, const int (*edges)[2], int m, an_vec2 spacing, an_vec2 *out);
 ```
 
 **Tidy tree:**
