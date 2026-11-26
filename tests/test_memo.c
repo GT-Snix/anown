@@ -173,15 +173,42 @@ static void check_scene(an_scene *s, const char *name) {
             hits += g_r.mesh.memo_hits;
             misses += g_r.mesh.memo_misses;
         }
-        if (bad) fprintf(stderr, "  %s, %s: %d of %lld frames differ\n", name, names[pass], bad, (long long)L + 1);
+        // say "identical" only when they are (a failing pass once printed both lines,
+        // and its hit count was mistaken for the passing build's)
+        if (bad) fprintf(stderr, "  %s, %s: %d of %lld frames DIFFER; cache %d hits, %d misses\n", name, names[pass], bad,
+                         (long long)L + 1, hits, misses);
+        else printf("  %s, %s: %lld frames identical; cache %d hits, %d misses\n", name, names[pass], (long long)L + 1, hits, misses);
         CHECK(bad == 0);
-        printf("  %s, %s: %lld frames identical; cache %d hits, %d misses\n", name, names[pass], (long long)L + 1, hits, misses);
         if (pass == 0) CHECK(hits > 0); // the cache is actually used
     }
     g_r.mesh.memo_budget = 0;
     free(order);
     free(ref);
 }
+
+// The cache's behavior is a pure function of the scene and the frame order: the hit
+// count of a forward pass is the same on every run. 5 runs, each with a fresh
+// renderer (an empty cache) and a freshly built scene.
+static void check_hits_repeat(an_scene *(*make)(void), const char *name) {
+    int hits[5];
+    for (int run = 0; run < 5; run++) {
+        ani_renderer_shutdown(&g_r);
+        CHECK(ani_renderer_init(&g_r, SG_PIXELFORMAT_RGBA8, SG_PIXELFORMAT_DEPTH_STENCIL, 4));
+        an_scene *s = make();
+        hits[run] = 0;
+        for (int64_t f = 0; f <= an_scene_length(s); f++) {
+            render(s, f);
+            hits[run] += g_r.mesh.memo_hits;
+        }
+        an_scene_destroy(s);
+    }
+    const bool same = hits[0] == hits[1] && hits[0] == hits[2] && hits[0] == hits[3] && hits[0] == hits[4];
+    if (!same) fprintf(stderr, "  %s: hits differ across runs: %d %d %d %d %d\n", name, hits[0], hits[1], hits[2], hits[3], hits[4]);
+    else printf("  %s: %d hits on each of 5 runs\n", name, hits[0]);
+    CHECK(same && hits[0] > 0);
+}
+
+static an_scene *make_shapes(void) { return scene_shapes(0); }
 
 int main(void) {
     if (!ani_gfx_setup_headless()) {
@@ -199,6 +226,9 @@ int main(void) {
     an_scene *sp = scene_space();
     check_scene(sp, "space (spinning frame, sphere)");
     an_scene_destroy(sp);
+    check_hits_repeat(make_shapes, "shapes");
+    check_hits_repeat(scene_text, "text");
+    check_hits_repeat(scene_space, "space");
     // a new scene, possibly at the old one's address, with the same ids and
     // other geometry: the cache must not replay the old scene's entries (it compares a
     // per-scene serial). Without a cache-off reference pass in between: the
