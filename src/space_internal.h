@@ -37,8 +37,28 @@ bool ani_space_line_seg(const an_obj *line, const ani_view *v, an_vec2 lo, an_ve
 // has_tip: the tip itself is visible (the head is drawn)
 bool ani_space_vector_geom(an_obj *vec, const ani_view *v, ani_time at, an_vec2 *tail, an_vec2 *tip, an_vec2 *dir,
                            float *head, bool *has_tip);
-// a path's visible pieces as move/line runs: up to cap points; starts[k] = 1 begins a
-// subpath. Returns the number of points; *closed: one unbroken closed loop
-int ani_space_path_px(const an_obj *path, const ani_view *v, an_vec2 *out, unsigned char *starts, int cap, bool *closed);
+const an_obj *ani_space_root(const an_obj *o); // the space above a frame (or the space itself)
+
+// Projected runs: st[k] = 1 starts an open run, 2 a closed one, 0 continues.
+typedef struct ani_pxbuf { an_vec2 *p; unsigned char *st; int n, cap; bool oom; } ani_pxbuf;
+void ani_pxbuf_free(ani_pxbuf *b);
+
+// Curves in 3D: a line c + t a, or an ellipse c + cos t a + sin t b. Projected with
+// near-plane cutting; an edge longer than ANI_SPACE_SUBDIV px on screen is split at
+// its parameter midpoint, at most ANI_SPACE_SUBDIV_LEVELS times.
+#define ANI_SPACE_SUBDIV 24.0f
+#define ANI_SPACE_SUBDIV_LEVELS 6
+typedef struct ani_curve { bool line; double c[3], a[3], b[3]; } ani_curve;
+void ani_curve_at(const ani_curve *k, double t, double p[3]);
+void ani_curve_px(const ani_view *v, const ani_curve *k, double t0, double t1, int nbase, bool closed, ani_pxbuf *b);
+void ani_space_path_runs(const an_obj *path, const ani_view *v, ani_pxbuf *b);
+
+// Spheres (docs/space.md): spans of the wire on the near or far side, and the silhouette.
+typedef struct ani_span { int curve; double t0, t1; bool near, closed; } ani_span;
+bool ani_sphere_eye(const an_obj *sph, const ani_view *v, double e[3], bool *dir);
+int ani_sphere_curves(const an_obj *sph);
+void ani_sphere_curve(const an_obj *sph, int i, ani_curve *k, double *t0, double *t1, int *nbase, bool *closed);
+int ani_sphere_spans(const an_obj *sph, const ani_view *v, ani_span *out, int cap);
+bool ani_sphere_silhouette(const an_obj *sph, const ani_view *v, ani_curve *k);
 
 #endif

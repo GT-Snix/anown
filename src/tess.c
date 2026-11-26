@@ -1029,13 +1029,15 @@ static bool emit_glyphs_cb(ani_mesh *m, void *ctx, int target) {
     return emit_glyphs(m, c->gs, c->n, target);
 }
 
-static bool emit_glyphs_memo(ani_mesh *m, const an_scene *s, glyph_item *gs, int n, int target) {
+static bool emit_glyphs_memo_x(ani_mesh *m, const an_scene *s, glyph_item *gs, int n, int target, const void *extra,
+                               size_t nextra) {
     if (n <= 0) return true;
     glyphs_ctx ctx = { gs, n };
     if (!m->memo_off) {
         struct ani_memo *mm = m->memo;
         mm->kb_len = 0;
         if (!KB(n)) return false;
+        if (extra && !kb_put(mm, extra, nextra)) return false;
         for (int i = 0; i < n; i++) {
             const glyph_item *g = &gs[i];
             if (!KB(g->o->id) || !KB(g->w) || !KB(g->pw) || !key_style(mm, &g->st) || !KB(g->fill_on) ||
@@ -1044,6 +1046,10 @@ static bool emit_glyphs_memo(ani_mesh *m, const an_scene *s, glyph_item *gs, int
         }
     }
     return memo_run(m, s->serial, gs[0].o->id, 1, target, emit_glyphs_cb, &ctx);
+}
+
+static bool emit_glyphs_memo(ani_mesh *m, const an_scene *s, glyph_item *gs, int n, int target) {
+    return emit_glyphs_memo_x(m, s, gs, n, target, NULL, 0);
 }
 
 // Join adjacent runs of the same target and paint over contiguous vertices.
@@ -1180,6 +1186,101 @@ static space_key space_key_of(const ani_view *v, an_vec2 lo, an_vec2 hi) {
     return k;
 }
 
+// Projected runs (space.c) as one stroke: move/line subpaths, closed where marked.
+static bool emit_runs(ani_mesh *m, const an_scene *s, const an_obj *c, ani_affine pw, int t, const emit_style *st,
+                      const ani_pxbuf *b, const void *key, size_t nkey) {
+    if (b->oom) return false;
+    if (b->n < 2) return true;
+    ani_path_builder pb;
+    ani_pb_init(&pb);
+    bool ok = true, close = false;
+    for (int i = 0; i < b->n && ok; i++) {
+        if (b->st[i]) {
+            if (close) ani_pb_close(&pb);
+            close = b->st[i] == 2;
+            ok = ani_pb_move(&pb, b->p[i]);
+        } else {
+            ok = ani_pb_line(&pb, b->p[i]);
+        }
+    }
+    if (ok && close) ani_pb_close(&pb);
+    ani_path *path = ok ? ani_pb_finish(&pb, &m->frame_arena) : NULL;
+    ani_pb_free(&pb);
+    if (!path) return false;
+    an_obj tmp = *c;
+    tmp.kind = AN_KIND_STROKE;
+    tmp.path = path;
+    tmp.has_stroke = true;
+    return emit_memo(m, s, &tmp, pw, st, t, key, nkey);
+}
+
+// A sphere (docs/space.md): the far wire (in its own layer at `back`), the filled
+// silhouette, the silhouette's outline, the near wire; in that order. The key: the
+// composed view (frames included), the eye in the sphere's own space, and the part.
+static bool emit_sphere(ani_mesh *m, const an_scene *s, an_obj *c, ani_affine pw, int t, const emit_style *st,
+                        const ani_view *v, an_vec2 lo, an_vec2 hi) {
+    struct { space_key view; float eye[3]; float back; int part; } key = { space_key_of(v, lo, hi), { 0, 0, 0 },
+                                                                            c->u.sphere.back, 0 };
+    double e[3] = { 0, 0, 0 };
+    bool dir = false;
+    const bool cull = ani_sphere_eye(c, v, e, &dir);
+    for (int i = 0; i < 3; i++) key.eye[i] = cull ? (float)e[i] : 0.0f;
+    ani_pxbuf near = { 0 }, far = { 0 }, sil = { 0 };
+    enum { CAP = 4096 };
+    ani_span *spans = ani_arena_alloc(&m->frame_arena, sizeof(ani_span) * CAP, alignof(ani_span));
+    if (!spans) return false;
+    const int ns = ani_sphere_spans(c, v, spans, CAP);
+    for (int i = 0; i < ns; i++) {
+        if (!spans[i].near && !(c->u.sphere.back > 0.0f)) continue;
+        ani_curve k;
+        double t0, t1;
+        int nb;
+        bool closed;
+        ani_sphere_curve(c, spans[i].curve, &k, &t0, &t1, &nb, &closed);
+        const int n = (int)ceil((double)nb * (spans[i].t1 - spans[i].t0) / (t1 - t0) - 1e-9);
+        ani_curve_px(v, &k, spans[i].t0, spans[i].t1, n, spans[i].closed, spans[i].near ? &near : &far);
+    }
+    ani_curve sk;
+    const bool has_sil = ani_sphere_silhouette(c, v, &sk);
+    if (has_sil) ani_curve_px(v, &sk, 0.0, 6.283185307179586, 64, true, &sil);
+    bool ok = true;
+    if (far.n >= 2) { // the far wire, faded as a whole
+        key.part = 0;
+        const int tf = layer_new(m, t, c->u.sphere.back, c);
+        ok = tf >= 0 && emit_runs(m, s, c, pw, tf, st, &far, &key, sizeof key);
+    }
+    if (ok && has_sil && sil.n >= 3 && !c->no_fill && st->fill.a > 0.0f && st->draw >= 1.0f) {
+        ani_path_builder pb; // the fill: the silhouette as a polygon (stencil, non-zero)
+        ani_pb_init(&pb);
+        for (int i = 0; i < sil.n && ok; i++) ok = i ? ani_pb_line(&pb, sil.p[i]) : ani_pb_move(&pb, sil.p[i]);
+        if (ok) ani_pb_close(&pb);
+        ani_path *path = ok ? ani_pb_finish(&pb, &m->frame_arena) : NULL;
+        ani_pb_free(&pb);
+        if (!path) ok = false;
+        if (ok) {
+            an_obj tmp = *c;
+            tmp.kind = AN_KIND_POLYGON;
+            tmp.path = path;
+            tmp.has_stroke = false;
+            glyph_item g = { .o = &tmp, .w = pw, .pw = pw, .st = *st, .fill_on = true, .ink_on = false, .soff = st->shadow_offset };
+            key.part = 1;
+            ok = emit_glyphs_memo_x(m, s, &g, 1, t, &key, sizeof key);
+        }
+    }
+    if (ok && has_sil) {
+        key.part = 2;
+        ok = emit_runs(m, s, c, pw, t, st, &sil, &key, sizeof key);
+    }
+    if (ok) {
+        key.part = 3;
+        ok = emit_runs(m, s, c, pw, t, st, &near, &key, sizeof key);
+    }
+    ani_pxbuf_free(&near);
+    ani_pxbuf_free(&far);
+    ani_pxbuf_free(&sil);
+    return ok;
+}
+
 // A space's grid, line, vector or path at `at` (docs/space.md): mapped, projected
 // and cut at the near plane, then stroked as on the plane.
 static bool emit_space_child(ani_mesh *m, const an_scene *s, an_obj *c, ani_affine pw, int target, float chaos,
@@ -1214,27 +1315,13 @@ static bool emit_space_child(ani_mesh *m, const an_scene *s, an_obj *c, ani_affi
         return emit_plane_seg(m, s, c, c->rng_key, pw, t, &st, key.a, key.b, &key, sizeof key);
     }
     if (c->kind == AN_KIND_SPACE_PATH) {
-        const int cap = c->u.smark.npts * 2 + 2;
-        an_vec2 *pts = ani_arena_alloc(&m->frame_arena, sizeof(an_vec2) * (size_t)cap, alignof(an_vec2));
-        unsigned char *starts = ani_arena_alloc(&m->frame_arena, (size_t)cap, 1);
-        if (!pts || !starts) return false;
-        bool closed;
-        const int n = ani_space_path_px(c, v, pts, starts, cap, &closed);
-        if (n < 2) return true;
-        ani_path_builder pb;
-        ani_pb_init(&pb);
-        bool ok = true;
-        for (int i = 0; i < n && ok; i++) ok = starts[i] ? ani_pb_move(&pb, pts[i]) : ani_pb_line(&pb, pts[i]);
-        if (ok && closed) ani_pb_close(&pb);
-        ani_path *path = ok ? ani_pb_finish(&pb, &m->frame_arena) : NULL;
-        ani_pb_free(&pb);
-        if (!path) return false;
-        an_obj tmp = *c;
-        tmp.kind = AN_KIND_STROKE;
-        tmp.path = path;
-        tmp.has_stroke = true;
-        return emit_memo(m, s, &tmp, pw, &st, t, &key, sizeof key);
+        ani_pxbuf buf = { 0 };
+        ani_space_path_runs(c, v, &buf);
+        const bool ok = emit_runs(m, s, c, pw, t, &st, &buf, &key, sizeof key);
+        ani_pxbuf_free(&buf);
+        return ok;
     }
+    if (c->kind == AN_KIND_SPACE_SPHERE) return emit_sphere(m, s, c, pw, t, &st, v, lo, hi);
     // a vector: the shaft to the head's base, then the head on the tip frame
     an_vec2 tail, tip, dir;
     float hs;
@@ -1273,7 +1360,8 @@ static bool visit_children(ani_mesh *m, const an_scene *s, const an_obj *parent,
     const int gbase = m->glyph_count;
     // a plane's children: its matrix at this frame, and the frame as a clip box in
     // its own px (docs/plane.md)
-    const bool in_plane = parent->kind == AN_KIND_PLANE, in_space = parent->kind == AN_KIND_SPACE;
+    const bool in_plane = parent->kind == AN_KIND_PLANE,
+               in_space = parent->kind == AN_KIND_SPACE || parent->kind == AN_KIND_SPACE_FRAME;
     ani_map pmap = { 0 };
     ani_view sview = { 0 };
     an_vec2 clo = { 0, 0 }, chi = { 0, 0 };
@@ -1305,15 +1393,16 @@ static bool visit_children(ani_mesh *m, const an_scene *s, const an_obj *parent,
         an_vec2 lpos = { (float)pos.v[0], (float)pos.v[1] };
         const bool mapped = (in_plane && ani_plane_mapped_kind(c)) || (in_space && ani_space_mapped_kind(c));
         if (in_plane && !mapped) lpos = ani_map_point(&pmap, lpos); // anchored: pos -> M pos, shape upright
-        if (in_space && !mapped) { // anchored: its 3D point projected, shape upright; hidden behind the near plane
+        const bool frame = c->kind == AN_KIND_SPACE_FRAME; // a frame draws nothing; its children map through it
+        if (in_space && !mapped && !frame) { // anchored: its 3D point projected, shape upright; hidden behind the near plane
             double p3[3];
             ani_space_pos3(c, at, p3);
             const ani_cam3 cp = ani_view_cam(&sview, p3);
             if (!ani_view_visible(&sview, cp)) continue;
             lpos = ani_view_px(&sview, cp);
         }
-        ani_affine local = mapped ? (ani_affine){ 1, 0, 0, 1, 0, 0 } : ani_local(lpos, scale, (float)rot.v[0]);
-        if (mapped) verb = false;
+        ani_affine local = mapped || frame ? (ani_affine){ 1, 0, 0, 1, 0, 0 } : ani_local(lpos, scale, (float)rot.v[0]);
+        if (mapped || frame) verb = false;
         if (verb) {
             const ani_value vp = ani_sample(ani_obj_prop(c, AN_PROP_VERB_PIVOT), at);
             local = ani_verb_local(local, vscale, (float)vr.v[0], (an_vec2){ (float)vp.v[0], (float)vp.v[1] });
@@ -1377,7 +1466,8 @@ static bool visit_children(ani_mesh *m, const an_scene *s, const an_obj *parent,
                               c->kind != AN_KIND_ARRAY && c->kind != AN_KIND_CALLOUT && c->kind != AN_KIND_NODE &&
                               c->kind != AN_KIND_AXES && c->kind != AN_KIND_EDGE && c->kind != AN_KIND_GRAPH &&
                               c->kind != AN_KIND_TEXT_VERSION && c->kind != AN_KIND_PLANE &&
-                              c->kind != AN_KIND_SPACE && !ani_plane_mapped_kind(c) && !ani_space_mapped_kind(c);
+                              c->kind != AN_KIND_SPACE && c->kind != AN_KIND_SPACE_FRAME && !ani_plane_mapped_kind(c) &&
+                              !ani_space_mapped_kind(c);
         if (drawable) st = sample_style(s, c, chaos, at);
         // Isolate when the node fades as a unit, or (outside any layer) when a
         // translucent paint needs stencil coverage. docs/layers.md

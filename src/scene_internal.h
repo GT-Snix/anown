@@ -166,6 +166,18 @@ struct an_obj {
             float grid_step, grid_extent;
             bool ortho;
         } space;
+        // AN_KIND_SPACE_FRAME: BASE matrix, origin and spin; the spin axis (unit)
+        struct {
+            float m[9];
+            an_vec3 origin, axis;
+            float spin;
+        } frame;
+        // AN_KIND_SPACE_SPHERE
+        struct {
+            an_vec3 center;
+            float radius, back;
+            int meridians, parallels;
+        } sphere;
         // AN_KIND_SPACE_LINE / _PATH (a vector's v is its pos, pos_z and scale)
         struct {
             an_vec3 p, dir;        // line

@@ -291,6 +291,146 @@ static void test_move3_and_helpers(void) {
     an_scene_destroy(s);
 }
 
+// ---- milestone B ----------------------------------------------------------------------------
+
+// Spin is rigid: a frame spinning 0 -> 4 pi about (1, 1, 1)/sqrt 3 over 2 s. At the
+// default camera with M = I the camera map is orthonormal, so |cam(v) - cam(0)| =
+// |R v| = |v| = 1 within 1e-5 at every frame, and the axis tip 2 (1, 1, 1)/sqrt 3
+// lands on the same pixel (within 1e-4 px). And for a spin about z, (0, 0, 1) maps
+// exactly as with no spin at all.
+static void test_spin(void) {
+    an_scene *s = scene();
+    an_obj *sp = an_space(s, NULL);
+    an_obj *f = an_space_frame(sp, &(an_frame_opts){ .spin_axis = { 1, 1, 1 } });
+    an_play(s, an_frame_spin_to(f, 4 * PI, &(an_anim_opts){ .duration = 2, .ease = AN_EASE_LINEAR }));
+    const double a = 2.0 / sqrt(3.0), tipp[3] = { a, a, a }, v1[3] = { 1, 0, 0 }, o[3] = { 0, 0, 0 };
+    const ani_view v0 = ani_space_view_at(f, ani_frame_time(s, 0));
+    const an_vec2 tip0 = ani_view_px(&v0, ani_view_cam(&v0, tipp));
+    double worst_len = 0, worst_tip = 0;
+    for (int64_t fr = 0; fr <= an_scene_length(s); fr++) {
+        const ani_view v = ani_space_view_at(f, ani_frame_time(s, fr));
+        const ani_cam3 c1 = ani_view_cam(&v, v1), c0 = ani_view_cam(&v, o);
+        const double len = sqrt((c1.x - c0.x) * (c1.x - c0.x) + (c1.y - c0.y) * (c1.y - c0.y) + (c1.depth - c0.depth) * (c1.depth - c0.depth));
+        worst_len = fmax(worst_len, fabs(len - 1.0));
+        const an_vec2 t = ani_view_px(&v, ani_view_cam(&v, tipp));
+        worst_tip = fmax(worst_tip, fmax(fabs(t.x - tip0.x), fabs(t.y - tip0.y)));
+    }
+    if (worst_len > 1e-5 || worst_tip > 1e-4) fprintf(stderr, "  spin: |Rv| off by %g, tip moved %g px\n", worst_len, worst_tip);
+    CHECK(worst_len <= 1e-5 && worst_tip <= 1e-4);
+    an_obj *fz = an_space_frame(sp, &(an_frame_opts){ .spin = 0.7f });
+    const double z[3] = { 0, 0, 1 };
+    const ani_view vz = ani_space_view_at(fz, ani_tick_time(s->cursor)), vr = ani_space_view_at(sp, ani_tick_time(s->cursor));
+    const ani_cam3 a1 = ani_view_cam(&vz, z), a2 = ani_view_cam(&vr, z);
+    CHECK(a1.x == a2.x && a1.y == a2.y && a1.depth == a2.depth);
+    an_scene_destroy(s);
+}
+
+// The split points between near and far spans on every meridian, as z in the
+// sphere's own space. A unit sphere at the default camera (eye (0, 0, 10)) splits at
+// z = r^2/|e| = 0.1. When the composed linear part scales z by k, the eye in the
+// sphere's space is (0, 0, 10/k): the split is at k/10.
+static int meridian_splits(an_obj *sph, an_obj *parent, double want, double *worst) {
+    const ani_view v = ani_space_view_at(parent, ani_tick_time(sph->scene->cursor));
+    ani_span sp[512];
+    const int n = ani_sphere_spans(sph, &v, sp, 512);
+    int splits = 0;
+    for (int i = 0; i + 1 < n; i++) {
+        if (sp[i].curve != sp[i + 1].curve || sp[i].curve >= sph->u.sphere.meridians) continue;
+        ani_curve k;
+        double t0, t1;
+        int nb;
+        bool closed;
+        ani_sphere_curve(sph, sp[i].curve, &k, &t0, &t1, &nb, &closed);
+        double p[3];
+        ani_curve_at(&k, sp[i].t1, p);
+        *worst = fmax(*worst, fabs(p[2] - want));
+        splits++;
+    }
+    return splits;
+}
+
+static void test_sphere_culling(void) {
+    an_scene *s = scene();
+    an_obj *sp = an_space(s, NULL);
+    an_obj *sph = an_space_sphere(sp, NULL);
+    double worst = 0;
+    CHECK(meridian_splits(sph, sp, 0.1, &worst) == 12); // one split on each of 12 meridians
+    // the silhouette: the circle z = 0.1, radius sqrt 0.99, at depth 9.9:
+    // 100 sqrt(0.99) 10 / 9.9 = 100.5038 px from the center
+    const ani_view v = ani_space_view_at(sp, ani_tick_time(s->cursor));
+    ani_curve k;
+    CHECK(ani_sphere_silhouette(sph, &v, &k));
+    double wr = 0;
+    for (int i = 0; i < 64; i++) {
+        double p[3];
+        ani_curve_at(&k, 6.283185307179586 * i / 64.0, p);
+        const an_vec2 q = ani_view_px(&v, ani_view_cam(&v, p));
+        wr = fmax(wr, fabs(hypot(q.x, q.y) - 100.0 * sqrt(0.99) * 10.0 / 9.9));
+        wr = fmax(wr, fabs(p[2] - 0.1));
+    }
+    CHECK(wr <= 1e-3);
+    // ellipsoids: the root M stretches z by 2: split at 0.2
+    an_space_set_matrix(sp, an_mat3_scale((an_vec3){ 1, 1, 2 }));
+    CHECK(meridian_splits(sph, sp, 0.2, &worst) == 12);
+    // composed through frames: M (z 2) . outer (z 0.5) . inner (z 2) = z 2: 0.2; the
+    // outer alone composes to 1: 0.1
+    an_obj *outer = an_space_frame(sp, &(an_frame_opts){ .matrix = an_mat3_scale((an_vec3){ 1, 1, 0.5f }) });
+    an_obj *inner = an_space_frame(outer, &(an_frame_opts){ .matrix = an_mat3_scale((an_vec3){ 1, 1, 2 }) });
+    an_obj *s_outer = an_space_sphere(outer, NULL), *s_inner = an_space_sphere(inner, NULL);
+    CHECK(meridian_splits(s_outer, outer, 0.1, &worst) == 12);
+    CHECK(meridian_splits(s_inner, inner, 0.2, &worst) == 12);
+    CHECK(worst <= 1e-3);
+    if (worst > 1e-3) fprintf(stderr, "  culling: worst split %g from the hand value\n", worst);
+    // a singular frame (z crushed): no culling, every span on the near side, no silhouette
+    an_obj *flat = an_space_frame(sp, &(an_frame_opts){ .matrix = an_mat3_scale((an_vec3){ 1, 1, 0 }) });
+    an_obj *s_flat = an_space_sphere(flat, NULL);
+    const ani_view vf = ani_space_view_at(flat, ani_tick_time(s->cursor));
+    ani_span spans[512];
+    const int n = ani_sphere_spans(s_flat, &vf, spans, 512);
+    int far = 0;
+    for (int i = 0; i < n; i++) far += !spans[i].near;
+    CHECK(n == 19 && far == 0 && !ani_sphere_silhouette(s_flat, &vf, &k));
+    an_scene_destroy(s);
+}
+
+// Seek order with spin: a filled globe spinning in a frame (far wire at 0.3, its axis
+// over it), an egg stretching in another, and the camera orbiting; cache off as the
+// reference, then on: forward, reverse and shuffled. Every frame finite.
+static void test_seek_order_spin(void) {
+    an_scene *s = an_scene_create(&(an_scene_desc){ .width = W, .height = H, .fps = 30, .seed = 12, .style = { .shadow = true } });
+    an_obj *sp = an_space(s, &(an_space_opts){ .axes = true, .orbit = { 0.3f, 1.0f, 12 } });
+    an_obj *globe = an_space_frame(sp, &(an_frame_opts){ .origin = { -2, 0, 1.2f }, .spin_axis = { 0.4f, 0, 1 } });
+    an_space_sphere(globe, &(an_sphere_opts){ .radius = 1.2f, .fill = AN_HEX(0xF3EDE2), .back = 0.3f });
+    an_space_line(globe, (an_vec3){ 0, 0, 0 }, (an_vec3){ 0, 0, 1 }, &(an_line_opts){ .stroke = AN_HEX(0xFF6A00) });
+    an_obj *egg = an_space_frame(sp, &(an_frame_opts){ .origin = { 2, 0, 1 } });
+    an_space_sphere(egg, &(an_sphere_opts){ .radius = 0.7f });
+    an_space_vector(egg, (an_vec3){ 0.7f, 0, 0 }, NULL);
+    an_play_async(s, an_frame_spin_to(globe, 5.0f, &(an_anim_opts){ .duration = 1, .ease = AN_EASE_LINEAR }));
+    an_play_async(s, an_space_matrix_to(egg, an_mat3_scale((an_vec3){ 2, 1.5f, 1 }), &(an_anim_opts){ .duration = 0.6f }));
+    an_play(s, an_space_orbit_to(sp, (an_orbit){ 1.2f, 0.8f, 11 }, &(an_anim_opts){ .duration = 1 }));
+    const int64_t L = an_scene_length(s);
+    unsigned char *ref = malloc(BYTES * (size_t)(L + 1));
+    g_r.mesh.memo_off = true;
+    int nonfinite = 0;
+    for (int64_t f = 0; f <= L; f++) {
+        render(s, f);
+        nonfinite += nonfinite_vertices();
+        memcpy(ref + BYTES * (size_t)f, g_px, BYTES);
+    }
+    g_r.mesh.memo_off = false;
+    int bad = 0;
+    for (int pass = 0; pass < 3; pass++)
+        for (int64_t i = 0; i <= L; i++) {
+            const int64_t f = pass == 0 ? i : pass == 1 ? L - i : (i * 17) % (L + 1);
+            render(s, f);
+            bad += memcmp(ref + BYTES * (size_t)f, g_px, BYTES) != 0;
+        }
+    if (bad) fprintf(stderr, "  seek order with spin: %d of %lld frames differ\n", bad, (long long)(3 * (L + 1)));
+    CHECK(bad == 0 && nonfinite == 0);
+    free(ref);
+    an_scene_destroy(s);
+}
+
 int main(void) {
     if (!ani_gfx_setup_headless()) {
         fprintf(stderr, "test_space: headless Metal setup failed\n");
@@ -305,6 +445,9 @@ int main(void) {
     test_orbit_sweeps();
     test_seek_order();
     test_move3_and_helpers();
+    test_spin();
+    test_sphere_culling();
+    test_seek_order_spin();
     free(g_px);
     ani_renderer_shutdown(&g_r);
     ani_offscreen_destroy(&g_off);

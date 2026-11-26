@@ -127,6 +127,25 @@ static an_scene *scene_text(void) {
     return s;
 }
 
+// a 3D space (docs/space.md) with the camera still: a filled globe spinning in a
+// frame (only the frame's composed map and the eye in the sphere's space change;
+// the root view doesn't), its far wire at 0.4, an egg that stretches in another
+// frame, then holds (its keys repeat), and the grid and axes
+static an_scene *scene_space(void) {
+    an_scene *s = an_scene_create(&(an_scene_desc){ .width = W, .height = H, .fps = 30, .seed = 23 });
+    an_set_chaos(s, 0.0f);
+    an_obj *sp = an_space(s, &(an_space_opts){ .axes = true, .unit = 40, .orbit = { 0.4f, 1.0f, 12 } });
+    an_obj *globe = an_space_frame(sp, &(an_frame_opts){ .origin = { -2, 0, 1 }, .spin_axis = { 0.3f, 0, 1 } });
+    an_space_sphere(globe, &(an_sphere_opts){ .radius = 1.2f, .fill = AN_HEX(0xF3EDE2), .back = 0.4f });
+    an_space_line(globe, (an_vec3){ 0, 0, 0 }, (an_vec3){ 0, 0, 1 }, &(an_line_opts){ .stroke = AN_HEX(0xFF6A00) });
+    an_obj *egg = an_space_frame(sp, &(an_frame_opts){ .origin = { 2, 0, 1 } });
+    an_space_sphere(egg, &(an_sphere_opts){ .radius = 0.6f });
+    an_play_async(s, an_frame_spin_to(globe, 3.0f, &(an_anim_opts){ .duration = 2, .ease = AN_EASE_LINEAR }));
+    an_play(s, an_space_matrix_to(egg, an_mat3_scale((an_vec3){ 2, 1.5f, 1 }), &(an_anim_opts){ .duration = 0.6f }));
+    an_wait(s, 1.6f);
+    return s;
+}
+
 static void check_scene(an_scene *s, const char *name) {
     const int64_t L = an_scene_length(s);
     frame_hash *ref = calloc((size_t)L + 1, sizeof *ref);
@@ -177,6 +196,9 @@ int main(void) {
     check_scene(a, "shapes");
     an_scene *b = scene_text();
     check_scene(b, "text");
+    an_scene *sp = scene_space();
+    check_scene(sp, "space (spinning frame, sphere)");
+    an_scene_destroy(sp);
     // a new scene, possibly at the old one's address, with the same ids and
     // other geometry: the cache must not replay the old scene's entries (it compares a
     // per-scene serial). Without a cache-off reference pass in between: the

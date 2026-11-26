@@ -20,7 +20,8 @@ ani_affine ani_obj_world_at(an_obj *o, ani_time at) {
         pos.v[0] = q.x;
         pos.v[1] = q.y;
     }
-    if (o->parent->kind == AN_KIND_SPACE) { // docs/space.md
+    if (o->kind == AN_KIND_SPACE_FRAME) return ani_obj_world_at(o->parent, at); // no transform of its own
+    if (o->parent->kind == AN_KIND_SPACE || o->parent->kind == AN_KIND_SPACE_FRAME) { // docs/space.md
         if (ani_space_mapped_kind(o)) return ani_obj_world_at(o->parent, at);
         const ani_view v = ani_space_view_at(o->parent, at); // anchored: its 3D point projected
         double p3[3];

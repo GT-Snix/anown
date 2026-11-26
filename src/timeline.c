@@ -37,6 +37,8 @@ static const ani_prop_info g_props[AN_PROP_COUNT] = {
     [AN_PROP_SPACE_ORBIT] = { 2, ANI_SPACE_LINEAR, 1e-6 },
     [AN_PROP_SPACE_DISTANCE] = { 1, ANI_SPACE_LOG, 1e-6 },
     [AN_PROP_SPACE_TARGET] = { 3, ANI_SPACE_LINEAR, 1e-6 },
+    [AN_PROP_FRAME_ORIGIN] = { 3, ANI_SPACE_LINEAR, 1e-6 },
+    [AN_PROP_FRAME_SPIN] = { 1, ANI_SPACE_LINEAR, 1e-9 },
 };
 
 #define SETTLE_RELATIVE 1e-3 // spring tolerance relative to travel distance
@@ -101,8 +103,8 @@ ani_value ani_base_get(ani_prop_ref ref) {
     case AN_PROP_M3_ROW1:
     case AN_PROP_M3_ROW2: {
         const int r = (int)(ref.prop - AN_PROP_M3_ROW0);
-        if (o->kind == AN_KIND_SPACE)
-            return (ani_value){ { o->u.space.m[3 * r], o->u.space.m[3 * r + 1], o->u.space.m[3 * r + 2] } };
+        const float *m = o->kind == AN_KIND_SPACE ? o->u.space.m : o->kind == AN_KIND_SPACE_FRAME ? o->u.frame.m : NULL;
+        if (m) return (ani_value){ { m[3 * r], m[3 * r + 1], m[3 * r + 2] } };
         return (ani_value){ { r == 0, r == 1, r == 2 } };
     }
     case AN_PROP_SPACE_ORBIT:
@@ -112,6 +114,10 @@ ani_value ani_base_get(ani_prop_ref ref) {
     case AN_PROP_SPACE_TARGET:
         if (o->kind == AN_KIND_SPACE) return (ani_value){ { o->u.space.target.x, o->u.space.target.y, o->u.space.target.z } };
         return (ani_value){ { 0 } };
+    case AN_PROP_FRAME_ORIGIN:
+        if (o->kind == AN_KIND_SPACE_FRAME) return (ani_value){ { o->u.frame.origin.x, o->u.frame.origin.y, o->u.frame.origin.z } };
+        return (ani_value){ { 0 } };
+    case AN_PROP_FRAME_SPIN: return (ani_value){ { o->kind == AN_KIND_SPACE_FRAME ? o->u.frame.spin : 0.0 } };
     default: break; // camera properties aren't the object's
     }
     return (ani_value){ { 0 } };
@@ -150,8 +156,16 @@ static void base_set(ani_prop_ref ref, ani_value v) {
     case AN_PROP_M3_ROW0:
     case AN_PROP_M3_ROW1:
     case AN_PROP_M3_ROW2:
-        if (o->kind == AN_KIND_SPACE)
-            for (int k = 0; k < 3; k++) o->u.space.m[3 * (int)(ref.prop - AN_PROP_M3_ROW0) + k] = (float)v.v[k];
+        if (o->kind == AN_KIND_SPACE || o->kind == AN_KIND_SPACE_FRAME) {
+            float *m = o->kind == AN_KIND_SPACE ? o->u.space.m : o->u.frame.m;
+            for (int k = 0; k < 3; k++) m[3 * (int)(ref.prop - AN_PROP_M3_ROW0) + k] = (float)v.v[k];
+        }
+        break;
+    case AN_PROP_FRAME_ORIGIN:
+        if (o->kind == AN_KIND_SPACE_FRAME) o->u.frame.origin = (an_vec3){ (float)v.v[0], (float)v.v[1], (float)v.v[2] };
+        break;
+    case AN_PROP_FRAME_SPIN:
+        if (o->kind == AN_KIND_SPACE_FRAME) o->u.frame.spin = (float)v.v[0];
         break;
     case AN_PROP_SPACE_ORBIT:
         if (o->kind == AN_KIND_SPACE) {

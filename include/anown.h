@@ -161,6 +161,8 @@ typedef enum an_kind {
     AN_KIND_SPACE_LINE,   /* an infinite 3D line (an_space_line) */
     AN_KIND_SPACE_VECTOR, /* a 3D arrow from the space's origin (an_space_vector) */
     AN_KIND_SPACE_PATH,   /* a 3D polyline (an_space_path) */
+    AN_KIND_SPACE_FRAME,  /* a nested affine frame in a space (an_space_frame): a group */
+    AN_KIND_SPACE_SPHERE, /* a wireframe sphere (an_space_sphere) */
 } an_kind;
 
 typedef struct an_obj an_obj;
@@ -488,6 +490,8 @@ typedef enum an_prop {
     AN_PROP_SPACE_ORBIT,    /* spaces: {yaw, tilt}, radians (an_space_orbit_to) */
     AN_PROP_SPACE_DISTANCE, /* spaces: the camera's distance; interpolated in log space */
     AN_PROP_SPACE_TARGET,   /* spaces: the point the camera looks at {x, y, z} */
+    AN_PROP_FRAME_ORIGIN,   /* frames: the origin in the parent's units {x, y, z} */
+    AN_PROP_FRAME_SPIN,     /* frames: radians about the frame's spin axis */
     AN_PROP_COUNT
 } an_prop;
 
@@ -967,9 +971,41 @@ typedef struct an_space_opts {
     an_vec3 target;
 } an_space_opts;
 an_obj *an_space(an_scene *s, const an_space_opts *opts);
-an_anim an_space_matrix_to(an_obj *space, an_mat3 m, const an_anim_opts *opts);
-void an_space_set_matrix(an_obj *space, an_mat3 m);
-an_mat3 an_space_matrix_at_cursor(const an_obj *space);
+/* The matrix of a space (M) or of a frame (F). */
+an_anim an_space_matrix_to(an_obj *space_or_frame, an_mat3 m, const an_anim_opts *opts);
+void an_space_set_matrix(an_obj *space_or_frame, an_mat3 m);
+an_mat3 an_space_matrix_at_cursor(const an_obj *space_or_frame);
+
+/* A frame: a nested group inside a space (or another frame). A point p in it maps
+ * to origin + F R p in its parent, where R turns `spin` radians about spin_axis
+ * (exact: Rodrigues, in double, the angle reduced modulo 2 pi). The spin comes
+ * first: under a stretching F a spinning sphere stays the same egg and its wire
+ * slides over it; to turn an egg rigidly, nest a stretching frame inside a
+ * spinning one. Everything that takes a space also takes a frame. */
+typedef struct an_frame_opts {
+    AN_OBJ_FIELDS
+    an_vec3 origin;
+    an_mat3 matrix;        /* all zero: the identity */
+    an_vec3 spin_axis;     /* default (0, 0, 1) */
+    float spin;            /* radians */
+} an_frame_opts;
+an_obj *an_space_frame(an_obj *space_or_frame, const an_frame_opts *opts);
+an_anim an_frame_spin_to(an_obj *frame, float radians, const an_anim_opts *opts);
+an_anim an_frame_origin_to(an_obj *frame, an_vec3 origin, const an_anim_opts *opts);
+
+/* A wireframe sphere: meridians and parallels, the far side's wire at opacity
+ * `back` (0, the default, hides it), and its exact silhouette as an outline; with
+ * a fill, the silhouette is filled behind the near wire. In a stretching frame it's
+ * an ellipsoid, culled and outlined exactly. Lines through it draw over it. */
+typedef struct an_sphere_opts {
+    AN_OBJ_FIELDS
+    an_vec3 center;
+    float radius;          /* default 1 */
+    int meridians, parallels; /* default 12, 7 */
+    bool outline_only;     /* the silhouette alone */
+    float back;            /* the far wire's opacity, 0..1 */
+} an_sphere_opts;
+an_obj *an_space_sphere(an_obj *space_or_frame, const an_sphere_opts *opts);
 /* The camera. Yaw and tilt are linear, distance is log-space; a distance <= 0
  * keeps the current one. */
 an_anim an_space_orbit_to(an_obj *space, an_orbit o, const an_anim_opts *opts);
