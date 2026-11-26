@@ -17,6 +17,7 @@
 #include "offscreen_internal.h"
 #include "render_internal.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -125,8 +126,25 @@ static an_scene *build_code(void) {
     return s;
 }
 
+// scenario 8: a 3D space (docs/space.md): the floor grid, the axes and 24 vectors
+// (a ring of 12 on the floor, 12 rising), the camera orbiting a full turn and
+// dollying the whole time, so no space emission replays from the cache
+static an_scene *build_space(void) {
+    an_scene *s = an_scene_create(&(an_scene_desc){ .fps = 60, .seed = 7 });
+    an_obj *sp = an_space(s, &(an_space_opts){ .axes = true, .orbit = { 0, 0.9f, 12 } });
+    for (int k = 0; k < 24; k++) {
+        const float a = (float)k * 0.5235988f, r = k < 12 ? 3.0f : 2.0f;
+        an_space_vector(sp, (an_vec3){ r * cosf(a), r * sinf(a), k < 12 ? 0.0f : 1.5f + 0.1f * (float)(k - 12) },
+                        &(an_arrow_opts){ .stroke = k % 2 ? AN_HEX(0xE6007E) : AN_HEX(0x00B4D8), .stroke_width = 6 });
+    }
+    an_play_async(s, an_space_orbit_to(sp, (an_orbit){ 6.2831853f, 1.2f, 8 }, &(an_anim_opts){ .duration = 6, .ease = AN_EASE_LINEAR }));
+    an_wait(s, 6.0f);
+    return s;
+}
+
 static an_scene *build(int scenario) {
     if (scenario == 5) return build_code();
+    if (scenario == 8) return build_space();
     // default style: chaos 1, paper grain + vignette, riso on everything with ink;
     // scenario 3 also turns hard shadows on for every object
     an_scene *s = an_scene_create(&(an_scene_desc){ .fps = 60, .seed = 7, .style = { .shadow = scenario == 3,
@@ -295,10 +313,10 @@ int main(int argc, char **argv) {
             worst_frame = f;
         }
     }
-    static const char *names[8] = { "opaque (direct path)", "50 shapes fading together",
+    static const char *names[9] = { "opaque (direct path)", "50 shapes fading together",
                                     "everything in one fading group", "opaque, shadows on",
                                     "opaque, paper grain and vignette off", "30 x 60 code block",
-                                    "all drawn, 10% of objects moving", "as 6, with the camera panning" };
+                                    "all drawn, 10% of objects moving", "as 6, with the camera panning" , "3D space: grid, axes, 24 vectors, orbiting"};
     if (!machine_quiet("after the run")) return 3;
     printf("200 strokes + 50 filled shapes, scenario %d: %s, %lld frames, up to %d triangles, up to %d layers/frame\n",
            scenario, names[scenario], (long long)(L + 1), max_tris, max_layers);
