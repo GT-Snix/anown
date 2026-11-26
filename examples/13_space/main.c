@@ -1,11 +1,14 @@
-// 13_space: the 3D space, milestone A (docs/space.md). A grid seen straight
+// 13_space: the 3D space (docs/space.md). Milestone A: a grid seen straight
 // from above (it looks like the 2D plane) tilts back into 3D, the camera orbits
 // around three vectors, one of them leaving the floor, and the space takes a 3x3
-// matrix. Then the camera dollies in and settles.
+// matrix, then the camera dollies in. Milestone B: a spinning globe whose axis is
+// its eigenvector (lambda = 1, drawn over the globe), and an egg: a sphere
+// stretched by diag(3, 2, 1) and turned, its three axis arrows stretching with it.
 //
 //   ./build/examples/13_space [--frames DIR] [--every N] [--export FILE.mp4]
 #include "anown.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -64,6 +67,70 @@ int main(int argc, char **argv) {
     // dolly in, then settle low and to the side
     an_play(s, an_space_orbit_to(sp, (an_orbit){ 0.4f, 1.2f, 9 }, &(an_anim_opts){ .duration = 2.5f }));
     an_wait(s, 1.0f);
+    // ---- milestone B: the globe and the egg ----------------------------------------------------
+    an_play_async(s, an_space_matrix_to(sp, AN_MAT3_IDENTITY, &(an_anim_opts){ .duration = 1.2f }));
+    an_obj *gone[5] = { u, v, w, tip, drop };
+    for (int k = 0; k < 5; k++) an_play_async(s, an_fade_to(gone[k], 0, &(an_anim_opts){ .duration = 0.6f }));
+    an_play_async(s, an_space_target_to(sp, (an_vec3){ 0, 0, 1.3f }, &(an_anim_opts){ .duration = 1.8f }));
+    an_play(s, an_space_orbit_to(sp, (an_orbit){ -0.55f, 1.12f, 15 }, &(an_anim_opts){ .duration = 1.8f }));
+
+    // the globe: a filled sphere in a frame tilted 23.4 degrees, spinning about its axis
+    const float tilt = 0.4084f;
+    an_obj *globe = an_space_frame(sp, &(an_frame_opts){ .origin = { -3.2f, 0, 1.7f }, .spin_axis = { sinf(tilt), 0, cosf(tilt) } });
+    an_obj *ball = an_space_sphere(globe, &(an_sphere_opts){ .radius = 1.5f, .fill = AN_HEX(0xF3EDE2), .back = 0.22f,
+                                                             .stroke_width = 3, .hidden = true, .riso = AN_OFF, .shadow = AN_OFF });
+    // the axis, in a non-spinning frame with the same origin, along the spin axis: it
+    // draws over the globe (see-through), its upper half an arrow, lit orange
+    an_obj *ax = an_space_frame(sp, &(an_frame_opts){ .origin = { -3.2f, 0, 1.7f } });
+    const an_vec3 up = { 2.5f * sinf(tilt), 0, 2.5f * cosf(tilt) };
+    an_obj *axis_lo = an_space_path(ax, (an_vec3[]){ { 0, 0, 0 }, { -up.x, -up.y, -up.z } }, 2, false,
+                                    &(an_line_opts){ .stroke = ORANGE, .stroke_width = 5, .undrawn = true, .riso = AN_OFF, .shadow = AN_OFF });
+    an_obj *axis_hi = an_space_vector(ax, up, &(an_arrow_opts){ .stroke = ORANGE, .stroke_width = 7, .undrawn = true,
+                                                                 .riso = AN_OFF, .shadow = AN_OFF });
+    an_obj *lam = an_text(s, &(an_text_opts){ .parent = ax, .text = "\xCE\xBB = 1", .size = 46, .font = an_font_mono(s),
+                                               .align = AN_ALIGN_LEFT, .anchor = AN_ANCHOR_MIDDLE, .fill = ORANGE,
+                                               .hidden = true, .riso = AN_OFF, .shadow = AN_OFF });
+    an_obj_set_pos3(lam, (an_vec3){ up.x * 1.08f + 0.2f, 0, up.z * 1.08f });
+    an_play(s, an_fade_to(ball, 1, &(an_anim_opts){ .duration = 0.8f }));
+    an_play_async(s, an_frame_spin_to(globe, 6 * PI, &(an_anim_opts){ .duration = 14, .ease = AN_EASE_LINEAR }));
+    an_wait(s, 1.5f);
+    an_play_async(s, an_draw(axis_lo, &(an_anim_opts){ .duration = 0.5f }));
+    an_play(s, an_draw(axis_hi, &(an_anim_opts){ .duration = 0.7f }));
+    an_play(s, an_fade_to(lam, 1, &(an_anim_opts){ .duration = 0.4f }));
+    an_wait(s, 1.5f);
+
+    // the egg: a sphere of radius 0.8 with arrows along its axes; then F = R diag(3, 2, 1)
+    an_obj *egg = an_space_frame(sp, &(an_frame_opts){ .origin = { 3.0f, 0.3f, 1.5f } });
+    an_obj *shell = an_space_sphere(egg, &(an_sphere_opts){ .radius = 0.8f, .meridians = 10, .parallels = 5, .back = 0.22f,
+                                                            .hidden = true, .riso = AN_OFF, .shadow = AN_OFF });
+    static const an_color cols[3] = { MAGENTA, CYAN, ORANGE };
+    static const char *const stretch[3] = { "\xC3\x97" "3", "\xC3\x97" "2", "\xC3\x97" "1" };
+    an_obj *arms[3], *tags[3];
+    for (int k = 0; k < 3; k++) {
+        const an_vec3 e = { k == 0 ? 0.8f : 0, k == 1 ? 0.8f : 0, k == 2 ? 0.8f : 0 };
+        arms[k] = an_space_vector(egg, e, &(an_arrow_opts){ .stroke = cols[k], .stroke_width = 7, .undrawn = true,
+                                                            .riso = AN_OFF, .shadow = AN_OFF });
+        tags[k] = an_text(s, &(an_text_opts){ .parent = egg, .text = stretch[k], .size = 42, .font = an_font_mono(s),
+                                               .align = AN_ALIGN_CENTER, .anchor = AN_ANCHOR_MIDDLE, .fill = cols[k],
+                                               .hidden = true, .riso = AN_OFF, .shadow = AN_OFF });
+        an_obj_set_pos3(tags[k], (an_vec3){ e.x * 1.35f, e.y * 1.35f, e.z * 1.35f + (k == 2 ? 0.1f : 0) });
+    }
+    an_play(s, an_fade_to(shell, 1, &(an_anim_opts){ .duration = 0.6f }));
+    for (int k = 0; k < 3; k++) an_play(s, an_draw(arms[k], &(an_anim_opts){ .duration = 0.45f }));
+    an_wait(s, 0.4f);
+    const an_mat3 Rz = an_mat3_rotation((an_vec3){ 0, 0, 1 }, 0.6f), Rx = an_mat3_rotation((an_vec3){ 1, 0, 0 }, 0.35f);
+    an_mat3 Rm, F;
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++) {
+            Rm.m[3 * i + j] = Rz.m[3 * i] * Rx.m[j] + Rz.m[3 * i + 1] * Rx.m[3 + j] + Rz.m[3 * i + 2] * Rx.m[6 + j];
+        }
+    static const float d[3] = { 3, 2, 1 };
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++) F.m[3 * i + j] = Rm.m[3 * i + j] * d[j]; // R diag(3, 2, 1)
+    an_play_async(s, an_space_orbit_to(sp, (an_orbit){ 0.5f, 1.05f, 15 }, &(an_anim_opts){ .duration = 8, .ease = AN_EASE_LINEAR }));
+    an_play(s, an_space_matrix_to(egg, F, &(an_anim_opts){ .duration = 2.5f }));
+    for (int k = 0; k < 3; k++) an_play_async(s, an_fade_to(tags[k], 1, &(an_anim_opts){ .duration = 0.4f }));
+    an_wait(s, 6.0f);
     printf("13_space: %.2f s, frames 0..%lld\n", an_scene_time(s), (long long)an_scene_length(s));
 
     int rc = 0;

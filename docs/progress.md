@@ -1068,3 +1068,39 @@ near-plane cutting in camera space.
 - Milestone B: frames, spin, spheres, culling.
 - The 12 ms bench (scripts/bench.sh) wasn't run for a space scene.
 - Unchanged: reference frames and 12_eigen frames are identical; all 24 tests pass.
+
+## an_space milestone B; examples/13_space grows (2026-11-26)
+
+**Bench first.** scripts/bench.sh 8 (new scenario: grid, axes, 24 vectors,
+orbiting and dollying, 60 fps), 5 runs:
+- median 2.47-2.87 ms; p99 3.54-10.05 ms; worst frame 11.37 ms;
+- 0 frames over 12 ms or 16.7 ms.
+
+**What works:**
+- Frames (matrix, origin, spin about a fixed axis), nested; Rodrigues in
+  double, the angle reduced mod 2 pi.
+- an_space_sphere:
+  - a wire split near/far by bisection in the sphere's own space (the eye
+    mapped back through camera x M x every ancestor's F R; singular: no
+    culling);
+  - the far wire in a layer at .back;
+  - the exact silhouette (ellipsoids too), filled with .fill.
+- Curves and paths are subdivided on screen (24 px, 6 levels).
+- Tests (by hand): rigid spin, R (0,0,1) exact, meridian splits at 0.1 / 0.2
+  within 1e-3, the silhouette at 100.5038 px, singular frames unculled, seek
+  order with spin.
+- test_memo has a spinning-sphere scene; keying on the root view without the
+  eye fails it (66 of 67 frames).
+- The example (38 s): the globe spins 3 turns about its 23.4 degree axis, which
+  draws over it in orange with "lambda = 1". The egg (radius 0.8, F = Rz Rx
+  diag(3,2,1)) stretches its three axis arrows to x3, x2, x1. Stills every 15
+  frames are in out/space/, with contact_sheet.png.
+
+**As implemented:**
+- The globe's axis sits in its own non-spinning frame at the same origin, so it
+  doesn't turn with the wire.
+- The world axes (z -5) draw before the globe, so its fill hides them where
+  they pass behind it. Lines drawn after a sphere show over it.
+- A camera inside a sphere: no culling, no silhouette.
+
+**Not done:** the comic FX doc is next.
