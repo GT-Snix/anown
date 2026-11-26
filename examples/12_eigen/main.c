@@ -18,8 +18,9 @@
 enum { NCH = 7, RING = 24 };
 static int FPS = 30; // --fps; every chapter is timed in seconds
 // chapter durations, seconds (retime to the voiceover here)
-static const float DUR[NCH] = { 30, 60, 90, 120, 90, 70, 30 };
-static const bool BUILT[NCH] = { true, true, true, true, true, true, true };
+// chapter lengths, seconds (ch7: CH7_LEN). Chapter 6 is retired (the recap is done in the editor).
+static const float DUR[NCH] = { 14, 9, 8, 32, 21.5f, 17, 30 };
+static const bool BUILT[NCH] = { true, true, true, true, true, true, false };
 
 static const float PI = 3.14159265358979f;
 #define MAGENTA AN_HEX(0xE6007E)
@@ -33,7 +34,8 @@ static const an_mat2 IDENTITY = { 1, 0, 0, 1 };
 static an_scene *S;
 static an_obj *P; // the plane
 static double ch_start[NCH], ch_end[NCH];
-static an_obj *title; // made in chapter 0, used again in chapter 6
+static an_obj *title; // chapter 6 (retired) brings the title back; nothing makes it now
+static an_obj *c3_lines[2]; // chapter 3's magenta and cyan lines
 
 // ---- helpers a user ends up writing ----------------------------------------------------
 
@@ -165,397 +167,33 @@ static void end_chapter(int ch) {
     ch_end[ch] = an_scene_time(S);
 }
 
-// ---- chapter 0: the hook ------------------------------------------------------------------
+// ---- the 7-minute cut: self-contained chapters ---------------------------------------------
+//
+// Each chapter is its own scene and starts from the state it declares (the plane's
+// matrix and what's on it), so a chapter renders without the ones before it and the
+// seams between chapters are cuts. Cues are seconds into the chapter, placed on the
+// recorded narration (out/eigen/seven/audio): chapters 1, 2, 0, 3 and 4 are the
+// "fast version" (clip 1, in that order), chapter 5 sits in "eigen-coordinates"
+// (clip 4, 14.3 s in). Chapter 6 (the recap) is retired: done in the editor.
 
-static void chapter0(void) {
-    an_obj *g = chapter_group(0);
-    make_ring("ch0", CHARCOAL);
-    title = an_text(S, &(an_text_opts){ .parent = g, .text = "EIGENVECTORS", .pos = { 960, 540 }, .size = 170,
-                                        .align = AN_ALIGN_CENTER, .anchor = AN_ANCHOR_MIDDLE, .fill = MAGENTA,
-                                        .stroke = CHARCOAL, .stroke_width = 8, .shadow = AN_ON });
-    for (int k = 0; k < an_text_length(title); k++) {
-        an_play_async(S, an_slap(an_text_glyph(title, k),
-                                 &(an_verb_opts){ .enter = AN_ON, .impact_shake = k == an_text_length(title) - 1 ? 18.0f : 0.0f }));
-        an_wait(S, 0.07f);
+// the 24 arrows, drawn on at a given pace
+static void make_ring_paced(const char *prefix, an_color c, float gap, float dur) {
+    for (int k = 0; k < RING; k++) {
+        const float a = (float)k * 15.0f * PI / 180.0f;
+        ring[k] = arrow(nm("%s/ring/%d", prefix, k * 15), (an_vec2){ cosf(a), sinf(a) }, c, 5, true);
+        an_play_async(S, an_draw(ring[k], &(an_anim_opts){ .duration = dur }));
+        an_wait(S, gap);
     }
-    an_wait(S, 2.0f);
-    // into the top-left corner (the text is centered on its pos)
-    an_play_async(S, an_scale_to(title, (an_vec2){ 0.3f, 0.3f }, &(an_anim_opts){ .duration = 0.8f }));
-    an_play(S, an_move_to(title, (an_vec2){ 250, 70 }, &(an_anim_opts){ .duration = 0.8f }));
-    an_wait(S, 1.0f);
-    an_play(S, an_plane_matrix_to(P, A, &(an_anim_opts){ .duration = 3 }));
-    const int n = ring_count_staying(A);
-    printf("chapter 0: %d of %d arrows stay on their line\n", n, RING);
-    color_staying(A);
-    an_wait(S, 3.0f);
-    end_chapter(0);
 }
 
-// ---- chapter 1: vectors and directions --------------------------------------------------
-
-enum { DOTS_X = 9, DOTS_Y = 5 };
-static an_obj *c1_keep[8 + (2 * DOTS_X + 1) * (2 * DOTS_Y + 1)];
-static int c1_n;
-
-static void chapter1(void) {
-    chapter_group(1); // (no scene-level objects in this chapter)
-    // back to the identity; the ring goes
-    an_play_async(S, an_plane_matrix_to(P, IDENTITY, &(an_anim_opts){ .duration = 1.5f }));
-    fade_all(ring, RING, 0, 0.8f);
-    an_wait(S, 1.0f);
-    // the axes
-    an_obj *ax = an_plane_line(P, (an_vec2){ 0, 0 }, (an_vec2){ 1, 0 }, &(an_line_opts){ .name = "ch1/axis/x", .z = -5,
-                                .stroke = CHARCOAL, .stroke_width = 4, .undrawn = true, .shadow = AN_OFF, .riso = AN_OFF });
-    an_obj *ay = an_plane_line(P, (an_vec2){ 0, 0 }, (an_vec2){ 0, 1 }, &(an_line_opts){ .name = "ch1/axis/y", .z = -5,
-                                .stroke = CHARCOAL, .stroke_width = 4, .undrawn = true, .shadow = AN_OFF, .riso = AN_OFF });
-    an_play_async(S, an_draw(ax, &(an_anim_opts){ .duration = 1.2f }));
-    an_play(S, an_draw(ay, &(an_anim_opts){ .duration = 1.2f }));
-    an_wait(S, 1.0f);
-    // v = (2, 1) pops in, labeled
-    an_obj *v = arrow("ch1/v", (an_vec2){ 2, 1 }, CHARCOAL, 6, false);
-    pop_arrow(v);
-    an_obj *vl = plane_label("ch1/v/label", "v", (an_vec2){ 2.15f, 1.35f }, CHARCOAL, 44);
-    an_obj_set_opacity(vl, 0);
-    an_play(S, an_fade_to(vl, 1, &(an_anim_opts){ .duration = 0.4f }));
-    an_wait(S, 2.0f);
-    // its line of directions
-    an_obj *line = an_plane_line(P, (an_vec2){ 0, 0 }, (an_vec2){ 2, 1 }, &(an_line_opts){ .name = "ch1/v/line", .z = -4,
-                                  .stroke = pale(CHARCOAL, 0.55f), .stroke_width = 2, .hidden = true, .shadow = AN_OFF });
-    an_play(S, an_fade_to(line, 1, &(an_anim_opts){ .duration = 1.2f }));
-    an_wait(S, 3.0f);
-    // a probe sweeps once around the origin (rotation is clockwise: -2 pi turns it counter-clockwise)
-    an_obj *probe = arrow("ch1/probe", (an_vec2){ 1.5f, 0 }, ORANGE, 6, false);
-    pop_arrow(probe);
-    an_play(S, an_rotate_to(probe, -2.0f * PI, &(an_anim_opts){ .duration = 8, .ease = AN_EASE_LINEAR }));
-    an_play(S, an_fade_to(probe, 0, &(an_anim_opts){ .duration = 0.5f }));
-    an_wait(S, 2.0f);
-    // every point is the tip of some arrow: dots at the grid points...
-    c1_n = 0;
-    c1_keep[c1_n++] = v;
-    c1_keep[c1_n++] = vl;
-    c1_keep[c1_n++] = line;
-    an_obj *dots[(2 * DOTS_X + 1) * (2 * DOTS_Y + 1)];
-    int nd = 0;
-    for (int y = DOTS_Y; y >= -DOTS_Y; y--)
-        for (int x = -DOTS_X; x <= DOTS_X; x++) {
-            an_obj *d = an_plane_dot(P, (an_vec2){ (float)x, (float)y }, &(an_circle_opts){
-                                         .name = nm("ch1/dot/%d/%d", x, y), .radius = 5, .fill = CHARCOAL, .hidden = true,
-                                         .riso = AN_OFF, .shadow = AN_OFF });
-            dots[nd++] = d;
-            c1_keep[c1_n++] = d;
-        }
-    an_anim fades[(2 * DOTS_X + 1) * (2 * DOTS_Y + 1)];
-    for (int k = 0; k < nd; k++) fades[k] = an_fade_to(dots[k], 1, &(an_anim_opts){ .duration = 0.3f });
-    an_stagger(S, nd, fades, 0.012f);
-    an_wait(S, 1.5f);
-    // ...and arrows draw to a few of them
-    static const an_vec2 to[4] = { { 3, 2 }, { -2, 1 }, { -4, -3 }, { 1, -4 } };
-    for (int k = 0; k < 4; k++) {
-        an_obj *a = arrow(nm("ch1/to/%d", k), to[k], CHARCOAL, 5, true);
-        an_play(S, an_draw(a, &(an_anim_opts){ .duration = 0.7f }));
-        an_wait(S, 0.6f);
-        c1_keep[c1_n++] = a;
-    }
-    end_chapter(1);
-}
-
-// ---- chapter 2: a transformation moves everything ---------------------------------------
-
-// the plane point p in scene px at the identity (origin at the center, 1 unit = 100 px, y up)
-static an_vec2 scene_at_identity(an_vec2 p) { return (an_vec2){ 960 + 100 * p.x, 540 - 100 * p.y }; }
-
-// one vector's trip under A, against the line it started on (a thin pale scene line:
-// it stays where it was while the plane moves)
-static void trip(an_obj *g, const char *name, an_vec2 v) {
-    const an_vec2 o = scene_at_identity((an_vec2){ 0, 0 }), d = { v.x / hypotf(v.x, v.y), -v.y / hypotf(v.x, v.y) };
-    an_obj *line = an_line(S, &(an_line_opts){ .parent = g, .from = { o.x - d.x * 1300, o.y - d.y * 1300 },
-                                               .to = { o.x + d.x * 1300, o.y + d.y * 1300 }, .stroke = pale(CHARCOAL, 0.55f),
-                                               .stroke_width = 2, .hidden = true, .shadow = AN_OFF, .riso = AN_OFF });
-    an_obj *a = arrow(name, v, CHARCOAL, 6, false);
-    an_play_async(S, an_fade_to(line, 1, &(an_anim_opts){ .duration = 0.8f }));
-    pop_arrow(a);
-    an_wait(S, 1.5f);
-    an_play(S, an_plane_matrix_to(P, A, &(an_anim_opts){ .duration = 3 }));
-    const an_vec2 w = mul(A, v);
-    printf("chapter 2: (%g, %g) -> (%g, %g), %s its line\n", v.x, v.y, w.x, w.y, stays(A, v) ? "on" : "off");
-    an_wait(S, 3.0f);
-    an_play(S, an_plane_matrix_to(P, IDENTITY, &(an_anim_opts){ .duration = 1.5f }));
-    fade_all((an_obj *[]){ a, line }, 2, 0, 0.6f);
-    an_wait(S, 1.0f);
-}
-
-static an_obj *c2_count;
-
-static void chapter2(void) {
-    an_obj *g = chapter_group(2);
-    // only the axes and the grid stay
-    fade_all(c1_keep, c1_n, 0, 1.0f);
-    an_wait(S, 1.0f);
-    // the basis arrows under A: (1, 0) -> (3, 0), (0, 1) -> (1, 2)
-    an_obj *e1 = arrow("ch2/e1", (an_vec2){ 1, 0 }, CHARCOAL, 6, true), *e2 = arrow("ch2/e2", (an_vec2){ 0, 1 }, CHARCOAL, 6, true);
-    an_play_async(S, an_draw(e1, &(an_anim_opts){ .duration = 0.7f }));
-    an_play(S, an_draw(e2, &(an_anim_opts){ .duration = 0.7f }));
-    an_wait(S, 1.5f);
-    an_play(S, an_plane_matrix_to(P, A, &(an_anim_opts){ .duration = 3 }));
-    an_wait(S, 3.0f);
-    an_play(S, an_plane_matrix_to(P, IDENTITY, &(an_anim_opts){ .duration = 1.5f }));
-    an_wait(S, 1.0f);
-    fade_all((an_obj *[]){ e1, e2 }, 2, 0, 0.6f);
-    an_wait(S, 0.5f);
-    // two vectors that leave their line
-    trip(g, "ch2/v11", (an_vec2){ 1, 1 });
-    trip(g, "ch2/v01", (an_vec2){ 0, 1 });
-    // all 24, slower, and the count
-    make_ring("ch2", CHARCOAL);
-    an_wait(S, 1.0f);
-    an_play(S, an_plane_matrix_to(P, A, &(an_anim_opts){ .duration = 6 }));
-    const int left = RING - ring_count_staying(A);
-    printf("chapter 2: %d of %d left their line\n", left, RING);
-    c2_count = an_text(S, &(an_text_opts){ .parent = g, .text = nm("%d of %d left their line", left, RING),
-                                                .pos = { 960, 985 }, .size = 64, .align = AN_ALIGN_CENTER,
-                                                .anchor = AN_ANCHOR_MIDDLE, .fill = CHARCOAL, .hidden = true,
-                                                .riso = AN_OFF, .shadow = AN_OFF });
-    an_play(S, an_fade_to(c2_count, 1, &(an_anim_opts){ .duration = 0.6f }));
-    end_chapter(2);
-}
-
-// ---- chapter 3: eigenvectors and eigenvalues ----------------------------------------------
-
-static an_obj *c3_lines[2]; // the magenta and cyan span lines (kept for chapter 6)
-static an_obj *c3_keep[16];  // everything else chapter 3 leaves on screen
-static int c3_n;
+static an_vec2 unit_at(float deg) { return (an_vec2){ cosf(deg * PI / 180.0f), sinf(deg * PI / 180.0f) }; }
+static float deg_of(an_vec2 v) { return atan2f(v.y, v.x) * 180.0f / PI; }
 
 // the angle between v and A v, in degrees (from the cross and dot products)
 static float angle_v_av(an_vec2 v) {
     const an_vec2 w = mul(A, v);
     return fabsf(atan2f(v.x * w.y - v.y * w.x, v.x * w.x + v.y * w.y)) * 180.0f / PI;
 }
-
-static an_vec2 unit_at(float deg) { return (an_vec2){ cosf(deg * PI / 180.0f), sinf(deg * PI / 180.0f) }; }
-
-static void chapter3(void) {
-    an_obj *g = chapter_group(3);
-    an_obj *fade[RING + 1];
-    memcpy(fade, ring, sizeof ring);
-    fade[RING] = c2_count;
-    an_play_async(S, an_plane_matrix_to(P, IDENTITY, &(an_anim_opts){ .duration = 1.5f }));
-    fade_all(fade, RING + 1, 0, 1.0f);
-    an_wait(S, 1.0f);
-
-    // a) the probe: v sweeps from -30 to 150 degrees in steps of 2.5 (9 degrees a second);
-    // a lighter arrow shows A v; the readout shows the angle between them
-    enum { STEPS = 72 };
-    const float deg0 = -30.0f, step = 2.5f, dt = step / 9.0f;
-    an_obj *probe = arrow("ch3/probe", unit_at(deg0), ORANGE, 6, false);
-    an_obj *av = arrow("ch3/av", mul(A, unit_at(deg0)), pale(ORANGE, 0.5f), 5, false);
-    an_obj *avl = plane_label("ch3/av/label", "Av", mul(A, unit_at(deg0)), pale(ORANGE, 0.3f), 40);
-    an_obj *readout = an_text(S, &(an_text_opts){ .parent = g, .text = nm("angle(v, Av) = %5.1f\xC2\xB0", angle_v_av(unit_at(deg0))),
-                                                  .pos = { 1880, 70 }, .size = 46, .font = an_font_mono(S),
-                                                  .align = AN_ALIGN_RIGHT, .anchor = AN_ANCHOR_MIDDLE, .fill = CHARCOAL,
-                                                  .riso = AN_OFF, .shadow = AN_OFF, .hidden = true });
-    pop_arrow(probe);
-    an_play_async(S, an_fade_to(readout, 1, &(an_anim_opts){ .duration = 0.4f }));
-    pop_arrow(av);
-    an_wait(S, 1.0f);
-    an_obj *rings[2] = { NULL, NULL };
-    int hits = 0;
-    const an_anim_opts lin = { .duration = dt, .ease = AN_EASE_LINEAR };
-    for (int k = 1; k <= STEPS; k++) {
-        const float deg = deg0 + step * (float)k;
-        const an_vec2 v = unit_at(deg), w = mul(A, v);
-        an_play_async(S, an_move_to(probe, v, &lin));
-        an_play_async(S, an_move_to(av, w, &lin));
-        an_play_async(S, an_move_to(avl, (an_vec2){ w.x * 1.12f, w.y * 1.12f + 0.25f }, &lin));
-        an_play_async(S, an_text_set(readout, nm("angle(v, Av) = %5.1f\xC2\xB0", angle_v_av(v)),
-                                     &(an_text_set_opts){ .anim = { .duration = 0.1f } }));
-        an_wait(S, dt);
-        if (!stays(A, v) || hits == 2) continue;
-        // a hit: a ring on the arrow, the whole line in its color, and a 2 s hold
-        const an_color c = fabsf(v.y) < 1e-6f ? MAGENTA : CYAN;
-        printf("chapter 3: v at %.1f degrees stays on its line (A v = %.4g v)\n", deg, hypotf(w.x, w.y));
-        rings[hits] = an_plane_dot(P, v, &(an_circle_opts){ .name = nm("ch3/ring/%d", hits), .radius = 30, .no_fill = true,
-                                                             .stroke = c, .stroke_width = 6, .riso = AN_OFF, .shadow = AN_OFF });
-        an_play_async(S, an_slap(rings[hits], &(an_verb_opts){ .enter = AN_ON }));
-        c3_lines[hits] = an_plane_line(P, (an_vec2){ 0, 0 }, v, &(an_line_opts){ .name = nm("ch3/span/%d", hits), .z = -3,
-                                       .stroke = c, .stroke_width = 4, .undrawn = true, .riso = AN_OFF, .shadow = AN_OFF });
-        an_play_async(S, an_draw(c3_lines[hits], &(an_anim_opts){ .duration = 1.2f }));
-        an_wait(S, 2.0f);
-        hits++;
-    }
-    fade_all((an_obj *[]){ probe, av, avl, readout, rings[0], rings[1] }, 6, 0, 0.6f);
-    an_wait(S, 1.0f);
-
-    // b) along each line, A only stretches: points on them slide along them
-    static const an_vec2 on[8] = { { 1, 0 }, { 2, 0 }, { -1, 0 }, { -2, 0 }, { 1, -1 }, { 2, -2 }, { -1, 1 }, { -2, 2 } };
-    an_obj *dots[8];
-    for (int k = 0; k < 8; k++)
-        dots[k] = an_plane_dot(P, on[k], &(an_circle_opts){ .name = nm("ch3/dot/%d", k), .radius = 9, .hidden = true,
-                                                             .fill = k < 4 ? MAGENTA : CYAN, .riso = AN_OFF, .shadow = AN_OFF });
-    fade_all(dots, 8, 1, 0.5f);
-    an_wait(S, 1.5f);
-    an_play(S, an_plane_matrix_to(P, A, &(an_anim_opts){ .duration = 3 }));
-    an_wait(S, 0.5f);
-    // ticks at the images of (1, 0) and (1, -1), with the stretch
-    an_obj *marks[4];
-    for (int k = 0; k < 2; k++) {
-        const an_vec2 u = k ? (an_vec2){ 1, -1 } : (an_vec2){ 1, 0 };
-        // the plane is at A now: the point_at_cursor of u is already its image A u
-        const an_vec2 q = an_plane_point_at_cursor(P, u), o = an_plane_point_at_cursor(P, (an_vec2){ 0, 0 });
-        const float lam = hypotf(mul(A, u).x, mul(A, u).y) / hypotf(u.x, u.y);
-        an_vec2 n = { -(q.y - o.y), q.x - o.x }; // normal to the line, on screen
-        const float nl = hypotf(n.x, n.y);
-        n = (an_vec2){ n.x / nl, n.y / nl };
-        marks[2 * k] = an_line(S, &(an_line_opts){ .parent = g, .from = { q.x - n.x * 22, q.y - n.y * 22 },
-                                                   .to = { q.x + n.x * 22, q.y + n.y * 22 }, .stroke = k ? CYAN : MAGENTA,
-                                                   .stroke_width = 5, .undrawn = true, .riso = AN_OFF, .shadow = AN_OFF });
-        marks[2 * k + 1] = an_text(S, &(an_text_opts){ .parent = g, .text = nm("\xC3\x97%g", lam),
-                                                        .pos = { q.x - n.x * 60, q.y - n.y * 60 }, .size = 52,
-                                                        .font = an_font_mono(S), .align = AN_ALIGN_CENTER,
-                                                        .anchor = AN_ANCHOR_MIDDLE, .fill = k ? CYAN : MAGENTA, .hidden = true,
-                                                        .riso = AN_OFF, .shadow = AN_OFF });
-        an_play(S, an_draw(marks[2 * k], &(an_anim_opts){ .duration = 0.4f }));
-        an_play(S, an_fade_to(marks[2 * k + 1], 1, &(an_anim_opts){ .duration = 0.4f }));
-        an_wait(S, 0.8f);
-    }
-    an_wait(S, 3.0f);
-
-    // c) the equation
-    an_obj *eq = an_text(S, &(an_text_opts){ .parent = g, .text = "A v = \xCE\xBB v", .pos = { 960, 175 }, .size = 120,
-                                             .font = an_font_mono(S), .align = AN_ALIGN_CENTER, .anchor = AN_ANCHOR_MIDDLE,
-                                             .fill = CHARCOAL, .riso = AN_OFF, .shadow = AN_OFF });
-    for (int k = 0; k < an_text_length(eq); k++) {
-        an_play_async(S, an_slap(an_text_glyph(eq, k), &(an_verb_opts){ .enter = AN_ON }));
-        an_wait(S, 0.08f);
-    }
-    an_wait(S, 1.5f);
-    // letters (no spaces): A v = lambda v -> the lambda is 3, the last v is 4
-    const an_bounds lb = an_obj_bounds_at_cursor(an_text_glyph(eq, 3)), vb = an_obj_bounds_at_cursor(an_text_glyph(eq, 4));
-    an_obj *same = an_callout(S, &(an_callout_opts){ .parent = g, .text = "same direction", .size = 40,
-                                                       .pos = { 1450, 330 }, .target = { (vb.min.x + vb.max.x) * 0.5f, vb.max.y + 8 },
-                                                       .bend = 0.3f, .undrawn = true, .shadow = AN_OFF, .riso = AN_OFF });
-    an_obj *scaled = an_callout(S, &(an_callout_opts){ .parent = g, .text = "just scaled", .size = 40,
-                                                         .pos = { 560, 330 }, .target = { (lb.min.x + lb.max.x) * 0.5f, lb.max.y + 8 },
-                                                         .bend = -0.3f, .undrawn = true, .shadow = AN_OFF, .riso = AN_OFF });
-    an_play(S, an_draw(same, &(an_anim_opts){ .duration = 0.8f }));
-    an_wait(S, 1.0f);
-    an_play(S, an_draw(scaled, &(an_anim_opts){ .duration = 0.8f }));
-    an_wait(S, 3.0f);
-    an_obj *l1 = an_text(S, &(an_text_opts){ .parent = g, .text = nm("\xCE\xBB\xE2\x82\x81 = %g", 3.0), .pos = { 120, 880 },
-                                             .size = 64, .font = an_font_mono(S), .anchor = AN_ANCHOR_MIDDLE, .fill = MAGENTA,
-                                             .hidden = true, .riso = AN_OFF, .shadow = AN_OFF });
-    an_obj *l2 = an_text(S, &(an_text_opts){ .parent = g, .text = nm("\xCE\xBB\xE2\x82\x82 = %g", 2.0), .pos = { 120, 970 },
-                                             .size = 64, .font = an_font_mono(S), .anchor = AN_ANCHOR_MIDDLE, .fill = CYAN,
-                                             .hidden = true, .riso = AN_OFF, .shadow = AN_OFF });
-    an_play(S, an_fade_to(l1, 1, &(an_anim_opts){ .duration = 0.5f }));
-    an_play(S, an_fade_to(l2, 1, &(an_anim_opts){ .duration = 0.5f }));
-    an_wait(S, 3.0f);
-
-    // d) the name
-    fade_all((an_obj *[]){ same, scaled }, 2, 0, 0.5f);
-    const an_bounds tb = an_obj_bounds_at_cursor(title);
-    an_obj *name = an_callout(S, &(an_callout_opts){ .parent = g, .text = "eigen = German for \"own\", or \"characteristic\"",
-                                                       .size = 40, .pos = { 760, 330 },
-                                                       .target = { (tb.min.x + tb.max.x) * 0.5f, tb.max.y + 6 }, .bend = -0.3f,
-                                                       .undrawn = true, .shadow = AN_OFF, .riso = AN_OFF });
-    an_play(S, an_draw(name, &(an_anim_opts){ .duration = 1.0f }));
-    c3_n = 0;
-    for (int k = 0; k < 8; k++) c3_keep[c3_n++] = dots[k];
-    for (int k = 0; k < 4; k++) c3_keep[c3_n++] = marks[k];
-    c3_keep[c3_n++] = eq;
-    c3_keep[c3_n++] = l1;
-    c3_keep[c3_n++] = l2;
-    c3_keep[c3_n++] = name;
-    end_chapter(3);
-}
-
-// ---- chapter 4: edge cases ---------------------------------------------------------------
-
-static an_obj *c4_left[RING + 4];
-// what the chapter before 6 leaves on screen (set by that chapter)
-static an_obj **prev_left;
-static int prev_n;
-
-static void chapter4(void) {
-    an_obj *g = chapter_group(4);
-    an_obj *fade[18];
-    int nf = 0;
-    for (int k = 0; k < c3_n; k++) fade[nf++] = c3_keep[k];
-    fade[nf++] = c3_lines[0];
-    fade[nf++] = c3_lines[1];
-    an_play_async(S, an_plane_matrix_to(P, IDENTITY, &(an_anim_opts){ .duration = 1.5f }));
-    fade_all(fade, nf, 0, 1.0f);
-    an_wait(S, 1.0f);
-
-    // a) negative: B flips the x-axis arrow but keeps it on its line
-    const an_mat2 B = { -1, 0, 0, 2 };
-    an_obj *x = arrow("ch4/a/x", (an_vec2){ 1.5f, 0 }, CHARCOAL, 6, true), *y = arrow("ch4/a/y", (an_vec2){ 0, 1.5f }, CHARCOAL, 6, true);
-    an_play_async(S, an_draw(x, &(an_anim_opts){ .duration = 0.6f }));
-    an_play(S, an_draw(y, &(an_anim_opts){ .duration = 0.6f }));
-    an_wait(S, 1.5f);
-    an_play(S, an_plane_matrix_to(P, B, &(an_anim_opts){ .duration = 3 }));
-    printf("chapter 4a: B keeps (1, 0) on its line: %s; lambda = %g\n", stays(B, (an_vec2){ 1, 0 }) ? "yes" : "no",
-           (double)mul(B, (an_vec2){ 1, 0 }).x);
-    recolor(x, ORANGE, 0.5f);
-    an_wait(S, 0.6f);
-    const an_vec2 tip = an_plane_point_at_cursor(P, (an_vec2){ 1.5f, 0 });
-    an_obj *ca = note(g, "lambda = -1: still on the line, pointing backwards", (an_vec2){ 640, 330 },
-                      (an_vec2){ tip.x - 10, tip.y - 14 }, -0.3f);
-    hold_until(4, 28.0f);
-    an_play_async(S, an_plane_matrix_to(P, IDENTITY, &(an_anim_opts){ .duration = 1.5f }));
-    fade_all((an_obj *[]){ x, y, ca }, 3, 0, 1.0f);
-    hold_until(4, 30.0f);
-
-    // b) zero: C crushes the plane onto y = x; the direction (1, -1) goes to nothing
-    const an_mat2 C = { 1, 1, 1, 1 };
-    an_obj *u = arrow("ch4/b/u", (an_vec2){ 1, 1 }, CHARCOAL, 6, true), *w = arrow("ch4/b/w", (an_vec2){ 1, -1 }, CHARCOAL, 6, true);
-    an_play_async(S, an_draw(u, &(an_anim_opts){ .duration = 0.6f }));
-    an_play(S, an_draw(w, &(an_anim_opts){ .duration = 0.6f }));
-    an_wait(S, 1.5f);
-    an_play(S, an_plane_matrix_to(P, C, &(an_anim_opts){ .duration = 3 }));
-    const an_vec2 cw = mul(C, (an_vec2){ 1, -1 });
-    printf("chapter 4b: C (1, -1) = (%g, %g); C (1, 1) = 2 (1, 1)\n", (double)cw.x, (double)cw.y);
-    recolor(u, ORANGE, 0.5f);
-    an_wait(S, 0.6f);
-    const an_vec2 o = an_plane_point_at_cursor(P, (an_vec2){ 0, 0 });
-    an_obj *cb = note(g, "lambda = 0: this direction is crushed to nothing", (an_vec2){ 1300, 860 },
-                      (an_vec2){ o.x + 12, o.y + 14 }, 0.3f);
-    hold_until(4, 58.0f);
-    an_play_async(S, an_plane_matrix_to(P, IDENTITY, &(an_anim_opts){ .duration = 1.5f }));
-    fade_all((an_obj *[]){ u, w, cb }, 3, 0, 1.0f);
-    hold_until(4, 60.0f);
-
-    // c) none: a quarter turn, in three keyframes so lengths don't shrink much
-    make_ring("ch4", CHARCOAL);
-    an_wait(S, 0.5f);
-    // three of them in orange, each with the line it starts on (pale, fixed in the scene)
-    static const int marked[3] = { 0, 4, 9 }; // 0, 60 and 135 degrees
-    an_obj *lines[3];
-    for (int k = 0; k < 3; k++) {
-        const float a = (float)marked[k] * 15.0f * PI / 180.0f;
-        const an_vec2 o = scene_at_identity((an_vec2){ 0, 0 }), d = { cosf(a), -sinf(a) };
-        lines[k] = an_line(S, &(an_line_opts){ .parent = g, .from = { o.x - d.x * 1300, o.y - d.y * 1300 },
-                                               .to = { o.x + d.x * 1300, o.y + d.y * 1300 }, .stroke = pale(ORANGE, 0.5f),
-                                               .stroke_width = 2, .hidden = true, .shadow = AN_OFF, .riso = AN_OFF });
-        an_play_async(S, an_fade_to(lines[k], 1, &(an_anim_opts){ .duration = 0.6f }));
-        recolor(ring[marked[k]], ORANGE, 0.5f);
-    }
-    an_wait(S, 1.5f);
-    for (int k = 1; k <= 3; k++)
-        an_play(S, an_plane_matrix_to(P, rotation(30.0f * (float)k), &(an_anim_opts){ .duration = 1.2f, .ease = AN_EASE_LINEAR }));
-    printf("chapter 4c: a quarter turn keeps %d of %d arrows on their line\n", ring_count_staying(rotation(90)), RING);
-    an_wait(S, 0.8f);
-    c4_left[RING] = note(g, "no arrow stays on its line: no real eigenvectors", (an_vec2){ 960, 900 },
-                         an_plane_point_at_cursor(P, (an_vec2){ 0.2f, -1.05f }), 0.25f);
-    memcpy(c4_left, ring, sizeof ring);
-    for (int k = 0; k < 3; k++) c4_left[RING + 1 + k] = lines[k];
-    prev_left = c4_left;
-    prev_n = RING + 4;
-    end_chapter(4);
-}
-
-// ---- chapter 5: why it matters --------------------------------------------------------------
-
-static float deg_of(an_vec2 v) { return atan2f(v.y, v.x) * 180.0f / PI; }
 
 // move unit arrows (radius r) along the circle from a0[i] to a1[i] degrees (the short
 // way), all together, in `keys` linear steps over `dur` seconds
@@ -575,81 +213,270 @@ static void arcs(an_obj *const *objs, const float *a0, const float *a1, int n, f
     }
 }
 
-static an_obj *c5_left[RING + 3];
+static an_obj *span(const char *name, an_vec2 dir, an_color c, bool undrawn) {
+    return an_plane_line(P, (an_vec2){ 0, 0 }, dir, &(an_line_opts){ .name = name, .z = -3, .stroke = c, .stroke_width = 4,
+                                                                     .undrawn = undrawn, .riso = AN_OFF, .shadow = AN_OFF });
+}
 
+// ---- chapter 1: vectors and directions (clip 1, 0.0 - 9.0 s) ------------------------------------
+// Declared state: the plane at I, the grid, nothing on it.
+static void chapter1(void) {
+    chapter_group(1);
+    // "A vector is an arrow from the origin."
+    hold_until(1, 1.7f);
+    an_obj *v = arrow("ch1/v", (an_vec2){ 2, 1 }, CHARCOAL, 6, false);
+    pop_arrow(v);
+    an_obj *vl = plane_label("ch1/v/label", "v", (an_vec2){ 2.15f, 1.35f }, CHARCOAL, 44);
+    an_obj_set_opacity(vl, 0);
+    an_play(S, an_fade_to(vl, 1, &(an_anim_opts){ .duration = 0.4f }));
+    // "Every arrow points along a line, its direction"
+    hold_until(1, 4.7f);
+    an_obj *line = an_plane_line(P, (an_vec2){ 0, 0 }, (an_vec2){ 2, 1 }, &(an_line_opts){ .name = "ch1/v/line", .z = -4,
+                                  .stroke = pale(CHARCOAL, 0.55f), .stroke_width = 2, .hidden = true, .shadow = AN_OFF });
+    an_play(S, an_fade_to(line, 1, &(an_anim_opts){ .duration = 1.2f }));
+    end_chapter(1);
+}
+
+// ---- chapter 2: a transformation moves everything (clip 1, 9.9 - 17.9 s) ------------------------
+// Declared state: the plane at I, the grid.
+static void chapter2(void) {
+    chapter_group(2);
+    // "A transformation moves every arrow at once."
+    hold_until(2, 0.2f);
+    an_obj *e1 = arrow("ch2/e1", (an_vec2){ 1, 0 }, CHARCOAL, 6, true), *e2 = arrow("ch2/e2", (an_vec2){ 0, 1 }, CHARCOAL, 6, true);
+    an_play_async(S, an_draw(e1, &(an_anim_opts){ .duration = 0.6f }));
+    an_play(S, an_draw(e2, &(an_anim_opts){ .duration = 0.6f }));
+    hold_until(2, 1.0f);
+    // "Grid lines stay straight, parallel and evenly spaced, and the origin stays put."
+    an_play(S, an_plane_matrix_to(P, A, &(an_anim_opts){ .duration = 2.5f }));
+    end_chapter(2);
+}
+
+// ---- chapter 0: the hook ring (clip 1, 18.0 - 32.0 s) ---------------------------------------------
+// Declared state: the plane at I, the grid. (The title moved to the cold open.)
+static void chapter0(void) {
+    chapter_group(0);
+    // "Now take any transformation of the plane."
+    hold_until(0, 0.7f);
+    make_ring("ch0", CHARCOAL);
+    // "Almost every arrow gets knocked off the line it started on."
+    hold_until(0, 3.7f);
+    an_play(S, an_plane_matrix_to(P, A, &(an_anim_opts){ .duration = 3 }));
+    const int n = ring_count_staying(A);
+    printf("chapter 0: %d of %d arrows stay on their line\n", n, RING);
+    // "But a few special arrows don't turn at all, they just stretch."
+    hold_until(0, 7.6f);
+    color_staying(A);
+    end_chapter(0);
+}
+
+// ---- chapter 3: eigenvectors and eigenvalues (clip 1, 32.0 - 64.0 s) -----------------------------
+// Declared state: the plane at I, the grid.
+static void chapter3(void) {
+    an_obj *g = chapter_group(3);
+    // "Spin an arrow around and compare it with what the transformation does to it."
+    // The probe sweeps at 27 degrees a second (3x the old 9), from 30 degrees: it lines up
+    // at 135 on "here they are agreeing", holds 1 s, and at 180 on "those two lines".
+    const float deg0 = 30.0f, step = 2.5f, rate = 27.0f;
+    an_obj *probe = arrow("ch3/probe", unit_at(deg0), ORANGE, 6, false);
+    an_obj *av = arrow("ch3/av", mul(A, unit_at(deg0)), pale(ORANGE, 0.5f), 5, false);
+    an_obj *avl = plane_label("ch3/av/label", "Av", (an_vec2){ mul(A, unit_at(deg0)).x * 1.12f, mul(A, unit_at(deg0)).y * 1.12f + 0.25f },
+                              pale(ORANGE, 0.3f), 40);
+    an_obj *readout = an_text(S, &(an_text_opts){ .parent = g, .text = nm("angle(v, Av) = %5.1f\xC2\xB0", angle_v_av(unit_at(deg0))),
+                                                  .pos = { 1880, 70 }, .size = 46, .font = an_font_mono(S),
+                                                  .align = AN_ALIGN_RIGHT, .anchor = AN_ANCHOR_MIDDLE, .fill = CHARCOAL,
+                                                  .riso = AN_OFF, .shadow = AN_OFF, .hidden = true });
+    pop_arrow(probe);
+    an_play_async(S, an_fade_to(readout, 1, &(an_anim_opts){ .duration = 0.4f }));
+    pop_arrow(av);
+    // "Most of the time they disagree about direction."
+    hold_until(3, 4.7f);
+    an_obj *rings[2] = { NULL, NULL };
+    int hits = 0;
+    const float dt = step / rate;
+    const an_anim_opts lin = { .duration = dt, .ease = AN_EASE_LINEAR };
+    for (int k = 1; hits < 2 && k <= 80; k++) {
+        const float deg = deg0 + step * (float)k;
+        const an_vec2 v = unit_at(deg), w = mul(A, v);
+        an_play_async(S, an_move_to(probe, v, &lin));
+        an_play_async(S, an_move_to(av, w, &lin));
+        an_play_async(S, an_move_to(avl, (an_vec2){ w.x * 1.12f, w.y * 1.12f + 0.25f }, &lin));
+        an_play_async(S, an_text_set(readout, nm("angle(v, Av) = %5.1f\xC2\xB0", angle_v_av(v)),
+                                     &(an_text_set_opts){ .anim = { .duration = 0.05f } }));
+        an_wait(S, dt);
+        if (!stays(A, v)) continue;
+        // a hit: a ring on the arrow, the whole line in its color, and a 1 s hold
+        const an_color c = fabsf(v.y) < 1e-6f ? MAGENTA : CYAN;
+        printf("chapter 3: v at %.1f degrees stays on its line (A v = %.4g v)\n", deg, hypotf(w.x, w.y));
+        rings[hits] = an_plane_dot(P, v, &(an_circle_opts){ .name = nm("ch3/ring/%d", hits), .radius = 30, .no_fill = true,
+                                                             .stroke = c, .stroke_width = 6, .riso = AN_OFF, .shadow = AN_OFF });
+        an_play_async(S, an_slap(rings[hits], &(an_verb_opts){ .enter = AN_ON }));
+        c3_lines[hits] = span(nm("ch3/span/%d", hits), v, c, true);
+        an_play_async(S, an_draw(c3_lines[hits], &(an_anim_opts){ .duration = 0.8f }));
+        an_wait(S, 1.0f);
+        hits++;
+    }
+    hold_until(3, 12.5f);
+    fade_all((an_obj *[]){ probe, av, avl, readout, rings[0], rings[1] }, 6, 0, 0.5f);
+    // "Along each line, all it does is stretch."
+    hold_until(3, 14.0f);
+    static const an_vec2 on[8] = { { 1, 0 }, { 2, 0 }, { -1, 0 }, { -2, 0 }, { 1, -1 }, { 2, -2 }, { -1, 1 }, { -2, 2 } };
+    an_obj *dots[8];
+    for (int k = 0; k < 8; k++)
+        dots[k] = an_plane_dot(P, on[k], &(an_circle_opts){ .name = nm("ch3/dot/%d", k), .radius = 9, .hidden = true,
+                                                             .fill = k < 4 ? MAGENTA : CYAN, .riso = AN_OFF, .shadow = AN_OFF });
+    fade_all(dots, 8, 1, 0.4f);
+    hold_until(3, 15.3f);
+    an_play(S, an_plane_matrix_to(P, A, &(an_anim_opts){ .duration = 2.5f }));
+    // "That stretch factor is the eigenvalue. Three along this one, two along that one."
+    hold_until(3, 21.1f);
+    for (int k = 0; k < 2; k++) {
+        const an_vec2 u = k ? (an_vec2){ 1, -1 } : (an_vec2){ 1, 0 };
+        const an_vec2 q = an_plane_point_at_cursor(P, u), o = an_plane_point_at_cursor(P, (an_vec2){ 0, 0 });
+        const float lam = hypotf(mul(A, u).x, mul(A, u).y) / hypotf(u.x, u.y);
+        an_vec2 n = { -(q.y - o.y), q.x - o.x };
+        const float nl = hypotf(n.x, n.y);
+        n = (an_vec2){ n.x / nl, n.y / nl };
+        an_obj *tick = an_line(S, &(an_line_opts){ .parent = g, .from = { q.x - n.x * 22, q.y - n.y * 22 },
+                                                   .to = { q.x + n.x * 22, q.y + n.y * 22 }, .stroke = k ? CYAN : MAGENTA,
+                                                   .stroke_width = 5, .undrawn = true, .riso = AN_OFF, .shadow = AN_OFF });
+        an_obj *lbl = an_text(S, &(an_text_opts){ .parent = g, .text = nm("\xC3\x97%g", lam), .pos = { q.x - n.x * 60, q.y - n.y * 60 },
+                                                   .size = 52, .font = an_font_mono(S), .align = AN_ALIGN_CENTER,
+                                                   .anchor = AN_ANCHOR_MIDDLE, .fill = k ? CYAN : MAGENTA, .hidden = true,
+                                                   .riso = AN_OFF, .shadow = AN_OFF });
+        an_play(S, an_draw(tick, &(an_anim_opts){ .duration = 0.4f }));
+        an_play(S, an_fade_to(lbl, 1, &(an_anim_opts){ .duration = 0.4f }));
+        if (k == 0) hold_until(3, 22.9f); // "two along that one"
+    }
+    // "A v equals lambda v."
+    hold_until(3, 24.6f);
+    an_obj *eq = an_text(S, &(an_text_opts){ .parent = g, .text = "A v = \xCE\xBB v", .pos = { 960, 175 }, .size = 120,
+                                             .font = an_font_mono(S), .align = AN_ALIGN_CENTER, .anchor = AN_ANCHOR_MIDDLE,
+                                             .fill = CHARCOAL, .riso = AN_OFF, .shadow = AN_OFF });
+    for (int k = 0; k < an_text_length(eq); k++) {
+        an_play_async(S, an_slap(an_text_glyph(eq, k), &(an_verb_opts){ .enter = AN_ON }));
+        an_wait(S, 0.08f);
+    }
+    // "The arrow you put in, times a plain number."
+    hold_until(3, 27.4f);
+    an_obj *l1 = an_text(S, &(an_text_opts){ .parent = g, .text = nm("\xCE\xBB\xE2\x82\x81 = %g", 3.0), .pos = { 120, 880 },
+                                             .size = 64, .font = an_font_mono(S), .anchor = AN_ANCHOR_MIDDLE, .fill = MAGENTA,
+                                             .hidden = true, .riso = AN_OFF, .shadow = AN_OFF });
+    an_obj *l2 = an_text(S, &(an_text_opts){ .parent = g, .text = nm("\xCE\xBB\xE2\x82\x82 = %g", 2.0), .pos = { 120, 970 },
+                                             .size = 64, .font = an_font_mono(S), .anchor = AN_ANCHOR_MIDDLE, .fill = CYAN,
+                                             .hidden = true, .riso = AN_OFF, .shadow = AN_OFF });
+    an_play(S, an_fade_to(l1, 1, &(an_anim_opts){ .duration = 0.4f }));
+    an_play(S, an_fade_to(l2, 1, &(an_anim_opts){ .duration = 0.4f }));
+    end_chapter(3);
+}
+
+// ---- chapter 4: edge cases and "eigen = own" (clip 1, 63.2 - 84.7 s) -------------------------------
+// Declared state: the plane at I, the grid. About 4 s per case, then a 9.5 s end card.
+static an_obj **prev_left; // what the chapter before 6 left (chapter 6 is retired)
+static int prev_n;
+
+static void chapter4(void) {
+    an_obj *g = chapter_group(4);
+    // a) "Lambda can be negative. The arrow flips but stays on its line."
+    const an_mat2 B = { -1, 0, 0, 2 };
+    an_obj *x = arrow("ch4/a/x", (an_vec2){ 1.5f, 0 }, CHARCOAL, 6, true), *y = arrow("ch4/a/y", (an_vec2){ 0, 1.5f }, CHARCOAL, 6, true);
+    an_play_async(S, an_draw(x, &(an_anim_opts){ .duration = 0.4f }));
+    an_play(S, an_draw(y, &(an_anim_opts){ .duration = 0.4f }));
+    recolor(x, ORANGE, 0.3f);
+    hold_until(4, 0.9f);
+    an_play(S, an_plane_matrix_to(P, B, &(an_anim_opts){ .duration = 1.4f }));
+    printf("chapter 4a: B keeps (1, 0) on its line: %s; lambda = %g\n", stays(B, (an_vec2){ 1, 0 }) ? "yes" : "no",
+           (double)mul(B, (an_vec2){ 1, 0 }).x);
+    const an_vec2 tip = an_plane_point_at_cursor(P, (an_vec2){ 1.5f, 0 });
+    an_obj *ca = note(g, "lambda = -1: flipped, same line", (an_vec2){ 640, 330 }, (an_vec2){ tip.x - 10, tip.y - 14 }, -0.3f);
+    hold_until(4, 3.6f);
+    an_play_async(S, an_plane_matrix_to(P, IDENTITY, &(an_anim_opts){ .duration = 0.4f }));
+    fade_all((an_obj *[]){ x, y, ca }, 3, 0, 0.4f);
+    // b) "It can be zero as well. The whole direction gets crushed flat."
+    hold_until(4, 4.1f);
+    const an_mat2 C = { 1, 1, 1, 1 };
+    an_obj *u = arrow("ch4/b/u", (an_vec2){ 1, 1 }, CHARCOAL, 6, true), *w = arrow("ch4/b/w", (an_vec2){ 1, -1 }, CHARCOAL, 6, true);
+    an_play_async(S, an_draw(u, &(an_anim_opts){ .duration = 0.4f }));
+    an_play(S, an_draw(w, &(an_anim_opts){ .duration = 0.4f }));
+    recolor(w, ORANGE, 0.3f);
+    hold_until(4, 5.0f);
+    an_play(S, an_plane_matrix_to(P, C, &(an_anim_opts){ .duration = 1.8f }));
+    const an_vec2 cw = mul(C, (an_vec2){ 1, -1 });
+    printf("chapter 4b: C (1, -1) = (%g, %g)\n", (double)cw.x, (double)cw.y);
+    const an_vec2 o = an_plane_point_at_cursor(P, (an_vec2){ 0, 0 });
+    an_obj *cb = note(g, "lambda = 0: crushed flat", (an_vec2){ 1300, 860 }, (an_vec2){ o.x + 12, o.y + 14 }, 0.3f);
+    hold_until(4, 8.2f);
+    an_play_async(S, an_plane_matrix_to(P, IDENTITY, &(an_anim_opts){ .duration = 0.4f }));
+    fade_all((an_obj *[]){ u, w, cb }, 3, 0, 0.4f);
+    // c) "And a rotation has none at all. Every arrow turns." a quarter turn in three
+    // keyframes, so lengths don't shrink much
+    hold_until(4, 8.6f);
+    make_ring_paced("ch4", CHARCOAL, 0.02f, 0.3f);
+    hold_until(4, 9.6f);
+    for (int k = 1; k <= 3; k++)
+        an_play(S, an_plane_matrix_to(P, rotation(30.0f * (float)k), &(an_anim_opts){ .duration = 0.7f, .ease = AN_EASE_LINEAR }));
+    printf("chapter 4c: a quarter turn keeps %d of %d arrows on their line\n", ring_count_staying(rotation(90)), RING);
+    // the end card (9.5 s): "Eigen is German for own. These are the transformation's own
+    // directions. That's the short version. Now let's earn it."
+    hold_until(4, 12.0f);
+    an_play_async(S, an_fade_to(P, 0, &(an_anim_opts){ .duration = 0.4f }));
+    hold_until(4, 12.2f);
+    an_obj *own = an_text(S, &(an_text_opts){ .parent = g, .text = "eigen = own", .pos = { 960, 470 }, .size = 150,
+                                              .align = AN_ALIGN_CENTER, .anchor = AN_ANCHOR_MIDDLE, .fill = MAGENTA,
+                                              .stroke = CHARCOAL, .stroke_width = 7, .shadow = AN_OFF, .riso = AN_OFF });
+    for (int k = 0; k < an_text_length(own); k++) {
+        an_play_async(S, an_slap(an_text_glyph(own, k), &(an_verb_opts){ .enter = AN_ON,
+                                                                         .impact_shake = k == an_text_length(own) - 1 ? 14.0f : 0.0f }));
+        an_wait(S, 0.06f);
+    }
+    hold_until(4, 14.2f);
+    an_obj *eq = an_text(S, &(an_text_opts){ .parent = g, .text = "A v = \xCE\xBB v", .pos = { 960, 680 }, .size = 96,
+                                             .font = an_font_mono(S), .align = AN_ALIGN_CENTER, .anchor = AN_ANCHOR_MIDDLE,
+                                             .fill = CHARCOAL, .hidden = true, .riso = AN_OFF, .shadow = AN_OFF });
+    an_play(S, an_fade_to(eq, 1, &(an_anim_opts){ .duration = 0.5f }));
+    end_chapter(4);
+}
+
+// ---- chapter 5: the single arrow, again and again (clip 4, 14.3 - 31.3 s) ---------------------------
+// Declared state: the plane at I, the grid, the magenta and cyan lines already drawn.
 static void chapter5(void) {
     an_obj *g = chapter_group(5);
-    an_play_async(S, an_plane_matrix_to(P, IDENTITY, &(an_anim_opts){ .duration = 1.5f }));
-    fade_all(prev_left, prev_n, 0, 1.0f);
-    an_wait(S, 1.0f);
-    an_obj *span[2];
-    for (int k = 0; k < 2; k++) {
-        span[k] = an_plane_line(P, (an_vec2){ 0, 0 }, k ? (an_vec2){ 1, -1 } : (an_vec2){ 1, 0 },
-                                &(an_line_opts){ .name = nm("ch5/span/%d", k), .z = -3, .stroke = k ? CYAN : MAGENTA,
-                                                 .stroke_width = 4, .undrawn = true, .riso = AN_OFF, .shadow = AN_OFF });
-        an_play_async(S, an_draw(span[k], &(an_anim_opts){ .duration = 1.2f }));
-    }
-    an_wait(S, 1.5f);
-
-    // one arrow, A applied again and again, rescaled to unit length after each step
+    span("ch5/span/0", (an_vec2){ 1, 0 }, MAGENTA, false);
+    span("ch5/span/1", (an_vec2){ 1, -1 }, CYAN, false);
+    // "Remember that arrow that kept swinging toward the magenta line? This is why."
+    an_obj *rem = an_text(S, &(an_text_opts){ .parent = g, .text = "remember this?", .pos = { 60, 70 }, .size = 44,
+                                              .anchor = AN_ANCHOR_MIDDLE, .fill = CHARCOAL, .hidden = true,
+                                              .riso = AN_OFF, .shadow = AN_OFF });
+    an_play_async(S, an_fade_to(rem, 1, &(an_anim_opts){ .duration = 0.4f }));
     const float R = 2.0f; // drawn at length 2 so the angle is easy to see
     an_vec2 v = { 0, 1 };
+    hold_until(5, 0.4f);
     an_obj *a = arrow("ch5/v", (an_vec2){ 0, R }, ORANGE, 6, false);
     pop_arrow(a);
     an_obj *readout = an_text(S, &(an_text_opts){ .parent = g, .text = nm("angle = %5.1f\xC2\xB0", deg_of(v)),
                                                   .pos = { 1880, 70 }, .size = 52, .font = an_font_mono(S),
                                                   .align = AN_ALIGN_RIGHT, .anchor = AN_ANCHOR_MIDDLE, .fill = CHARCOAL,
                                                   .hidden = true, .riso = AN_OFF, .shadow = AN_OFF });
-    an_obj *fit = an_text(S, &(an_text_opts){ .parent = g, .text = "after each step: rescaled to fit", .pos = { 960, 1010 },
-                                              .size = 46, .align = AN_ALIGN_CENTER, .anchor = AN_ANCHOR_MIDDLE,
-                                              .fill = CHARCOAL, .hidden = true, .riso = AN_OFF, .shadow = AN_OFF });
-    an_play_async(S, an_fade_to(readout, 1, &(an_anim_opts){ .duration = 0.4f }));
-    an_play(S, an_fade_to(fit, 1, &(an_anim_opts){ .duration = 0.4f }));
-    an_wait(S, 1.0f);
+    an_play(S, an_fade_to(readout, 1, &(an_anim_opts){ .duration = 0.4f }));
+    // A applied again and again, rescaled to unit length after each step: 6 steps of 2 s
+    hold_until(5, 3.0f);
     printf("chapter 5: angles %.1f", (double)deg_of(v));
     for (int k = 1; k <= 6; k++) {
         const an_vec2 w = mul(A, v);
         an_obj *aw = arrow(nm("ch5/av/%d", k), (an_vec2){ w.x * R, w.y * R }, pale(ORANGE, 0.5f), 5, true);
-        an_play(S, an_draw(aw, &(an_anim_opts){ .duration = 0.6f }));
-        an_wait(S, 0.5f);
+        an_play(S, an_draw(aw, &(an_anim_opts){ .duration = 0.5f }));
+        an_wait(S, 0.3f);
         const float l = hypotf(w.x, w.y);
         const an_vec2 nv = { w.x / l, w.y / l };
         const float a0 = deg_of(v), a1 = deg_of(nv);
-        an_play_async(S, an_fade_to(aw, 0, &(an_anim_opts){ .duration = 0.6f }));
+        an_play_async(S, an_fade_to(aw, 0, &(an_anim_opts){ .duration = 0.5f }));
         an_play_async(S, an_text_set(readout, nm("angle = %5.1f\xC2\xB0", a1), &(an_text_set_opts){ .anim = { .duration = 0.3f } }));
-        arcs((an_obj *[]){ a }, &a0, &a1, 1, R, 1.0f, 12);
+        arcs((an_obj *[]){ a }, &a0, &a1, 1, R, 0.8f, 10);
         v = nv;
         printf(" %.1f", (double)a1);
-        an_wait(S, 0.8f);
+        hold_until(5, 3.0f + 2.0f * (float)k);
     }
     printf("\n");
-    an_wait(S, 1.5f);
-    fade_all((an_obj *[]){ a, readout }, 2, 0, 0.6f);
-    an_wait(S, 0.5f);
-
-    // the whole ring, normalized after every step: pulled toward the magenta line
-    make_ring("ch5", CHARCOAL);
-    an_wait(S, 1.0f);
-    float ang[RING], next[RING];
-    for (int k = 0; k < RING; k++) ang[k] = (float)k * 15.0f;
-    for (int step = 1; step <= 6; step++) {
-        int still = 0;
-        for (int k = 0; k < RING; k++) {
-            const an_vec2 u = { cosf(ang[k] * PI / 180.0f), sinf(ang[k] * PI / 180.0f) }, w = mul(A, u);
-            next[k] = deg_of(w);
-            still += stays(A, u);
-        }
-        if (step == 1) printf("chapter 5: %d ring arrows stay put (on the magenta and cyan lines)\n", still);
-        arcs(ring, ang, next, RING, 1.0f, 1.4f, 14);
-        memcpy(ang, next, sizeof ang);
-        an_wait(S, 0.8f);
-    }
-    memcpy(c5_left, ring, sizeof ring);
-    c5_left[RING] = span[0];
-    c5_left[RING + 1] = span[1];
-    c5_left[RING + 2] = fit;
-    prev_left = c5_left;
-    prev_n = RING + 3;
     end_chapter(5);
 }
 
@@ -1020,46 +847,32 @@ int main(int argc, char **argv) {
         an_scene_destroy(S3);
         return rc7;
     }
-    S = an_scene_create(&(an_scene_desc){ .width = 1920, .height = 1080, .fps = FPS, .seed = 12,
-                                          .style = { .grain_mode = AN_GRAIN_STATIC } }); // shadows only where asked (the title):
-    // a callout's label doesn't take the callout's .shadow, so the scene default is off
-    if (!S) return 1;
-    P = an_plane(S, &(an_plane_opts){ .name = "plane" }); // 1 unit = 100 px at 1080p, origin at the center
-
     void (*const chapters[NCH])(void) = { chapter0, chapter1, chapter2, chapter3, chapter4, chapter5, chapter6 };
-    for (int c = 0; c < NCH; c++) {
-        if (!BUILT[c]) continue;
-        ch_start[c] = an_scene_time(S);
-        chapters[c]();
-        printf("chapter %d: %.2f .. %.2f s\n", c, ch_start[c], ch_end[c]);
-    }
-    printf("timeline %.2f s, frames 0..%lld\n", an_scene_time(S), (long long)an_scene_length(S));
-
-    int rc = 0;
-    if (chapter >= 0 && (chapter >= NCH || !BUILT[chapter])) {
-        fprintf(stderr, "chapter %d isn't built yet\n", chapter);
+    if (chapter < 0 || chapter >= NCH || !BUILT[chapter]) {
+        fprintf(stderr, chapter == 6 ? "chapter 6 is retired (the recap is done in the editor)\n"
+                                     : "pick a chapter: --chapter 0..5 or 7\n");
         return 1;
     }
+    // each chapter is its own scene, starting from the state it declares
+    S = an_scene_create(&(an_scene_desc){ .width = 1920, .height = 1080, .fps = FPS, .seed = 12,
+                                          .style = { .grain_mode = AN_GRAIN_STATIC } });
+    if (!S) return 1;
+    P = an_plane(S, &(an_plane_opts){ .name = "plane" }); // 1 unit = 100 px at 1080p, origin at the center
+    ch_start[chapter] = 0;
+    chapters[chapter]();
+    printf("chapter %d: %.2f s (DUR %.2f), frames 0..%lld\n", chapter, ch_end[chapter], (double)DUR[chapter],
+           (long long)an_scene_length(S));
+
+    int rc = 0;
+    const int64_t L = an_scene_length(S);
     if (dir) {
-        const int64_t first = chapter >= 0 ? (int64_t)llround(ch_start[chapter] * FPS) : 0;
-        const int64_t last = chapter >= 0 ? (int64_t)llround(ch_end[chapter] * FPS) : an_scene_length(S);
-        const int64_t n = an_scene_save_frames(S, &(an_frames_desc){ .dir = dir, .every = every, .first = first, .last = last,
-                                                                     .prefix = chapter >= 0 ? nm("ch%d", chapter) : "eigen" });
-        if (n >= 0) printf("wrote %lld PNG frames (%lld..%lld, every %d) to %s\n", (long long)n, (long long)first,
-                           (long long)last, every, dir);
+        const int64_t n = an_scene_save_frames(S, &(an_frames_desc){ .dir = dir, .every = every, .prefix = nm("ch%d", chapter) });
+        if (n >= 0) printf("wrote %lld PNG frames (0..%lld, every %d) to %s\n", (long long)n, (long long)L, every, dir);
         rc = n >= 0 ? 0 : 1;
     }
-    if (chapter >= 0)
-        printf("chapter %d range: frames %lld..%lld\n", chapter, (long long)llround(ch_start[chapter] * FPS),
-               (long long)llround(ch_end[chapter] * FPS));
-    if (seams && rc == 0 && chapter >= 0)
-        rc = save_seams(S, seams, chapter, llround(ch_start[chapter] * FPS), llround(ch_end[chapter] * FPS));
-    if (mp4 && rc == 0) { // one chapter: its frames first..last, inclusive (as --frames)
-        const int64_t first = chapter >= 0 ? (int64_t)llround(ch_start[chapter] * FPS) : 0;
-        const int64_t last = chapter >= 0 ? (int64_t)llround(ch_end[chapter] * FPS) : an_scene_length(S);
-        const int64_t n = an_scene_export(S, &(an_export_desc){ .path = mp4, .first = first, .frames = last - first + 1 });
-        rc = n > 0 ? 0 : 1;
-    }
+    printf("chapter %d range: frames 0..%lld\n", chapter, (long long)L);
+    if (seams && rc == 0) rc = save_seams(S, seams, chapter, 0, L);
+    if (mp4 && rc == 0) rc = an_scene_export(S, &(an_export_desc){ .path = mp4 }) > 0 ? 0 : 1;
     if (!dir && !mp4) an_scene_preview(S);
     an_scene_destroy(S);
     return rc;
