@@ -698,16 +698,277 @@ static void chapter6(void) {
     end_chapter(6);
 }
 
+
+// ---- chapter 7: into 3D (its own scene) ------------------------------------------------------
+//
+// out/eigen/seven/SCRIPT.md, "3:00 Into 3D", timed to the recorded clip
+// (out/eigen/seven/audio/clips/3.eigen.mp3, 54.5 s): t(s) waits until s seconds into
+// it. Its own scene with an an_space: the plane story isn't ported. The 2D-to-3D
+// seam is a cut: this scene starts on frame 0, a boil step (the boil steps at 12 Hz
+// of frame time), and the outgoing 2D shot is cut just before one of its own boil
+// steps, so the jump reads as part of the line boil.
+
+static an_scene *S3;
+static const float CH7_LEN = 54.5f;
+
+static void t3(float sec) {
+    const double now = an_scene_time(S3);
+    if (now > sec + 1e-6) fprintf(stderr, "chapter 7: cue %.2f s already passed (at %.2f s)\n", (double)sec, now);
+    else an_wait(S3, (float)(sec - now));
+}
+
+static an_obj *say3(const char *text, an_vec2 at, an_color c, float size, bool mono) {
+    return an_text(S3, &(an_text_opts){ .text = text, .pos = at, .size = size, .font = mono ? an_font_mono(S3) : NULL,
+                                        .align = AN_ALIGN_CENTER, .anchor = AN_ANCHOR_MIDDLE, .fill = c, .hidden = true,
+                                        .riso = AN_OFF, .shadow = AN_OFF });
+}
+
+// a label anchored at a 3D point of a space or frame, upright, mono
+static an_obj *label3(an_obj *parent, const char *text, an_vec3 at, an_color c, float size) {
+    an_obj *t = an_text(S3, &(an_text_opts){ .parent = parent, .text = text, .size = size, .font = an_font_mono(S3),
+                                             .align = AN_ALIGN_LEFT, .anchor = AN_ANCHOR_MIDDLE, .fill = c, .hidden = true,
+                                             .riso = AN_OFF, .shadow = AN_OFF });
+    an_obj_set_pos3(t, at);
+    return t;
+}
+
+static void fade3(an_obj *const *objs, int n, float to, float dur) {
+    for (int k = 0; k < n; k++)
+        if (objs[k]) an_play_async(S3, an_fade_to(objs[k], to, &(an_anim_opts){ .duration = dur }));
+}
+
+static an_mat3 mat3_mul(an_mat3 a, an_mat3 b) {
+    an_mat3 m;
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++)
+            m.m[3 * i + j] = a.m[3 * i] * b.m[j] + a.m[3 * i + 1] * b.m[3 + j] + a.m[3 * i + 2] * b.m[6 + j];
+    return m;
+}
+
+static an_mat3 mat3_transpose(an_mat3 a) {
+    an_mat3 m;
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++) m.m[3 * i + j] = a.m[3 * j + i];
+    return m;
+}
+
+static an_vec3 mat3_apply(an_mat3 m, an_vec3 v) {
+    return (an_vec3){ m.m[0] * v.x + m.m[1] * v.y + m.m[2] * v.z, m.m[3] * v.x + m.m[4] * v.y + m.m[5] * v.z,
+                      m.m[6] * v.x + m.m[7] * v.y + m.m[8] * v.z };
+}
+
+static an_vec3 scale3(an_vec3 v, float k) { return (an_vec3){ v.x * k, v.y * k, v.z * k }; }
+
+// a globe that spins about `axis` (unit), centered at c: the wire globe in a spinning
+// frame, and its axis (an arrow up, a line down) in a still frame at the same place,
+// drawn after the globe so it shows over it
+typedef struct globe3 { an_obj *spin, *still, *ball, *up, *down; } globe3;
+
+static globe3 make_globe(an_obj *sp, an_vec3 c, an_vec3 axis, float r) {
+    globe3 g;
+    g.spin = an_space_frame(sp, &(an_frame_opts){ .origin = c, .spin_axis = axis });
+    g.ball = an_space_sphere(g.spin, &(an_sphere_opts){ .radius = r, .back = 0.18f, .stroke_width = 3, .hidden = true,
+                                                        .riso = AN_OFF, .shadow = AN_OFF });
+    g.still = an_space_frame(sp, &(an_frame_opts){ .origin = c });
+    const an_vec3 tip = scale3(axis, r * 1.6f);
+    g.up = an_space_vector(g.still, tip, &(an_arrow_opts){ .stroke = ORANGE, .stroke_width = 8, .undrawn = true,
+                                                           .riso = AN_OFF, .shadow = AN_OFF });
+    g.down = an_space_path(g.still, (an_vec3[]){ { 0, 0, 0 }, scale3(tip, -1) }, 2, false,
+                           &(an_line_opts){ .stroke = ORANGE, .stroke_width = 6, .undrawn = true, .riso = AN_OFF,
+                                            .shadow = AN_OFF });
+    return g;
+}
+
+static void light_axis(globe3 *g) {
+    an_play_async(S3, an_draw(g->down, &(an_anim_opts){ .duration = 0.5f }));
+    an_play(S3, an_draw(g->up, &(an_anim_opts){ .duration = 0.7f }));
+}
+
+static void chapter7_build(void) {
+    S3 = an_scene_create(&(an_scene_desc){ .width = 1920, .height = 1080, .fps = FPS, .seed = 7,
+                                           .style = { .grain_mode = AN_GRAIN_STATIC } });
+    // the space starts straight overhead: the floor grid looks like the plane's
+    an_obj *sp = an_space(S3, &(an_space_opts){ .axes = true, .grid_extent = 7 });
+
+    // "Everything so far was flat." two arrows on the floor, the plane's colors
+    an_obj *flat[2] = {
+        an_space_vector(sp, (an_vec3){ 2, 0, 0 }, &(an_arrow_opts){ .stroke = MAGENTA, .stroke_width = 7, .riso = AN_OFF, .shadow = AN_OFF }),
+        an_space_vector(sp, (an_vec3){ 1.4f, -1.4f, 0 }, &(an_arrow_opts){ .stroke = CYAN, .stroke_width = 7, .riso = AN_OFF, .shadow = AN_OFF }),
+    };
+    // "Let's add a dimension." tilt back into space
+    t3(3.2f);
+    an_play_async(S3, an_space_target_to(sp, (an_vec3){ 0, 0, 1.4f }, &(an_anim_opts){ .duration = 1.8f }));
+    an_play_async(S3, an_space_orbit_to(sp, (an_orbit){ -0.45f, 1.12f, 9 }, &(an_anim_opts){ .duration = 1.8f }));
+    t3(4.4f);
+    fade3(flat, 2, 0, 0.5f);
+    // a slow drift for the rest of the chapter
+    t3(5.0f);
+    an_play_async(S3, an_space_orbit_to(sp, (an_orbit){ 0.55f, 1.0f, 9.5f }, &(an_anim_opts){ .duration = 38, .ease = AN_EASE_LINEAR }));
+
+    // "Take a spinning globe, every point on it is moving,"
+    const float tilt = 0.4084f; // 23.4 degrees
+    const an_vec3 axis1 = { sinf(tilt), 0, cosf(tilt) }, c1 = { 0, 0, 1.6f };
+    globe3 g1 = make_globe(sp, c1, axis1, 1.6f);
+    an_play(S3, an_fade_to(g1.ball, 1, &(an_anim_opts){ .duration = 0.4f }));
+    an_play_async(S3, an_frame_spin_to(g1.spin, 2 * PI * 2.5f, &(an_anim_opts){ .duration = 13, .ease = AN_EASE_LINEAR }));
+    // points on the surface, riding the spin (in the spinning frame's own axes: the
+    // axis is its z): six around the middle latitudes
+    t3(6.0f);
+    an_obj *pts[6];
+    for (int k = 0; k < 6; k++) {
+        const float lon = (float)k * PI / 3.0f, lat = k % 2 ? 0.35f : -0.25f;
+        pts[k] = an_space_dot(g1.spin, (an_vec3){ 1.6f * cosf(lat) * cosf(lon), 1.6f * cosf(lat) * sinf(lon), 1.6f * sinf(lat) },
+                              &(an_circle_opts){ .radius = 9, .fill = MAGENTA, .hidden = true, .riso = AN_OFF, .shadow = AN_OFF });
+    }
+    fade3(pts, 6, 1, 0.3f);
+    // "except the one on the axis." the poles: still
+    t3(8.2f);
+    an_obj *poles[2];
+    for (int k = 0; k < 2; k++) {
+        poles[k] = an_space_dot(g1.still, scale3(axis1, k ? -1.6f : 1.6f),
+                                &(an_circle_opts){ .radius = 12, .fill = ORANGE, .riso = AN_OFF, .shadow = AN_OFF });
+        an_play_async(S3, an_slap(poles[k], &(an_verb_opts){ .enter = AN_ON }));
+    }
+    // "The axis is an eigenvector ... with eigenvalue one." the axis lights up
+    t3(9.6f);
+    light_axis(&g1);
+    t3(12.4f);
+    an_obj *lam1 = label3(g1.still, "\xCE\xBB = 1", scale3(axis1, 1.6f * 1.75f), ORANGE, 48);
+    an_play(S3, an_slap(lam1, &(an_verb_opts){ .enter = AN_ON }));
+    // "The rotation doesn't turn it and doesn't stretch it either." a radius on the
+    // equator turns with the globe; the axis doesn't
+    t3(13.3f);
+    an_obj *radius = an_space_vector(g1.spin, (an_vec3){ 1.6f, 0, 0 }, &(an_arrow_opts){ .stroke = CHARCOAL, .stroke_width = 6,
+                                                                                    .undrawn = true, .riso = AN_OFF, .shadow = AN_OFF });
+    an_play(S3, an_draw(radius, &(an_anim_opts){ .duration = 0.5f }));
+
+    // "And here's the cool part. Every rotation in 3D has one." another spin, another axis
+    t3(17.2f);
+    an_obj *g1_all[7] = { g1.ball, g1.up, g1.down, lam1, radius, poles[0], poles[1] };
+    fade3(g1_all, 7, 0, 0.6f);
+    fade3(pts, 6, 0, 0.6f);
+    t3(18.3f);
+    an_vec3 axis2 = { 0.8f, -0.45f, 0.4f };
+    const float l2 = sqrtf(axis2.x * axis2.x + axis2.y * axis2.y + axis2.z * axis2.z);
+    axis2 = scale3(axis2, 1.0f / l2);
+    globe3 g2 = make_globe(sp, c1, axis2, 1.6f);
+    an_play(S3, an_fade_to(g2.ball, 1, &(an_anim_opts){ .duration = 0.4f }));
+    an_play_async(S3, an_frame_spin_to(g2.spin, -2 * PI * 4.0f, &(an_anim_opts){ .duration = 25, .ease = AN_EASE_LINEAR }));
+    // "However you spin a ball, some line through the middle stays put."
+    t3(21.7f);
+    light_axis(&g2);
+    // "That's Euler's rotation theorem."
+    t3(24.3f);
+    an_obj *euler = say3("EULER'S ROTATION THEOREM", (an_vec2){ 960, 120 }, MAGENTA, 72, false);
+    an_play(S3, an_slap(euler, &(an_verb_opts){ .enter = AN_ON, .impact_shake = 10 }));
+    // "And it's an eigenvector hiding in plain sight."
+    t3(26.6f);
+    an_play(S3, an_stroke_width_to(g2.up, 13, &(an_anim_opts){ .duration = 0.4f }));
+    an_play(S3, an_stroke_width_to(g2.up, 8, &(an_anim_opts){ .duration = 0.6f }));
+
+    // "Remember how a flat rotation had no eigenvector at all? In 3D the spin keeps one
+    // real direction, and the other two come out as complex numbers ... round and round."
+    t3(29.1f);
+    an_play_async(S3, an_fade_to(euler, 0, &(an_anim_opts){ .duration = 0.5f }));
+    // a ring of arrows in the plane across the axis: they go round and round
+    an_obj *ring3[8];
+    for (int k = 0; k < 8; k++) {
+        const float a = (float)k * PI / 4.0f;
+        ring3[k] = an_space_vector(g2.spin, (an_vec3){ 1.25f * cosf(a), 1.25f * sinf(a), 0 },
+                                   &(an_arrow_opts){ .stroke = CYAN, .stroke_width = 5, .undrawn = true, .riso = AN_OFF, .shadow = AN_OFF });
+        an_play_async(S3, an_draw(ring3[k], &(an_anim_opts){ .duration = 0.4f }));
+        an_wait(S3, 0.06f);
+    }
+    t3(33.9f);
+    an_obj *lam_real = label3(g2.still, "\xCE\xBB = 1: real", scale3(axis2, 1.6f * 1.75f), ORANGE, 44);
+    an_play(S3, an_slap(lam_real, &(an_verb_opts){ .enter = AN_ON }));
+    t3(37.6f);
+    an_obj *lam_cx = say3("the other two \xCE\xBB: complex", (an_vec2){ 960, 980 }, CYAN, 54, true);
+    an_play(S3, an_fade_to(lam_cx, 1, &(an_anim_opts){ .duration = 0.4f }));
+    t3(41.7f);
+    an_obj *round = say3("round and round", (an_vec2){ 960, 1040 }, CHARCOAL, 40, false);
+    an_play(S3, an_fade_to(round, 1, &(an_anim_opts){ .duration = 0.4f }));
+
+    // "Now stretch instead of spin. A sphere becomes an egg, and the egg's three axes are
+    // the three eigenvectors. Long axis, biggest eigenvalue."
+    t3(43.0f);
+    an_obj *g2_all[14] = { g2.ball, g2.up, g2.down, lam_real, lam_cx, round };
+    for (int k = 0; k < 8; k++) g2_all[6 + k] = ring3[k];
+    fade3(g2_all, 14, 0, 0.6f);
+    // the egg: a symmetric stretch S = R diag(3, 2, 1) R^T, so its axes R e_i are its
+    // eigenvectors: arrows along them stretch and never turn
+    t3(43.8f);
+    const an_mat3 R = mat3_mul(an_mat3_rotation((an_vec3){ 0, 0, 1 }, 0.5f), an_mat3_rotation((an_vec3){ 1, 0, 0 }, 0.4f));
+    const an_mat3 Sm = mat3_mul(mat3_mul(R, an_mat3_scale((an_vec3){ 3, 2, 1 })), mat3_transpose(R));
+    an_obj *egg = an_space_frame(sp, &(an_frame_opts){ .origin = c1 });
+    an_obj *shell = an_space_sphere(egg, &(an_sphere_opts){ .radius = 1.0f, .meridians = 12, .parallels = 6, .back = 0.18f,
+                                                            .stroke_width = 3, .hidden = true, .riso = AN_OFF, .shadow = AN_OFF });
+    static const an_color cols[3] = { MAGENTA, CYAN, ORANGE };
+    static const char *const by[3] = { "\xC3\x97" "3", "\xC3\x97" "2", "\xC3\x97" "1" };
+    an_obj *arms[3], *tags[3];
+    for (int k = 0; k < 3; k++) {
+        const an_vec3 e = mat3_apply(R, (an_vec3){ k == 0, k == 1, k == 2 });
+        arms[k] = an_space_vector(egg, e, &(an_arrow_opts){ .stroke = cols[k], .stroke_width = 7, .undrawn = true,
+                                                            .riso = AN_OFF, .shadow = AN_OFF });
+        tags[k] = label3(egg, by[k], scale3(e, 1.3f), cols[k], 46);
+    }
+    an_play(S3, an_fade_to(shell, 1, &(an_anim_opts){ .duration = 0.5f }));
+    for (int k = 0; k < 3; k++) an_play(S3, an_draw(arms[k], &(an_anim_opts){ .duration = 0.3f }));
+    t3(45.8f);
+    an_play(S3, an_space_matrix_to(egg, Sm, &(an_anim_opts){ .duration = 2.2f }));
+    {   // computed, not typed: S e_i = lambda_i e_i
+        for (int k = 0; k < 3; k++) {
+            const an_vec3 e = mat3_apply(R, (an_vec3){ k == 0, k == 1, k == 2 }), se = mat3_apply(Sm, e);
+            const float lam = se.x * e.x + se.y * e.y + se.z * e.z;
+            const an_vec3 off = { se.x - lam * e.x, se.y - lam * e.y, se.z - lam * e.z };
+            printf("chapter 7: S e%d = %.4f e%d (off the line by %.1e)\n", k + 1, (double)lam, k + 1,
+                   (double)sqrtf(off.x * off.x + off.y * off.y + off.z * off.z));
+        }
+    }
+    t3(49.3f);
+    for (int k = 0; k < 3; k++) {
+        an_play_async(S3, an_slap(tags[k], &(an_verb_opts){ .enter = AN_ON }));
+        an_wait(S3, 0.25f);
+    }
+    t3(51.5f);
+    an_play(S3, an_stroke_width_to(arms[0], 12, &(an_anim_opts){ .duration = 0.4f }));
+    t3(52.6f);
+    an_obj *big = say3("long axis = biggest \xCE\xBB", (an_vec2){ 960, 990 }, MAGENTA, 54, true);
+    an_play(S3, an_slap(big, &(an_verb_opts){ .enter = AN_ON }));
+    t3(CH7_LEN);
+}
+
 // ---- main -----------------------------------------------------------------------------------
 
 int main(int argc, char **argv) {
     int chapter = -1, every = 30;
+    float from = -1, to = -1; // chapter 7: seconds into it (stills around a moment)
     const char *dir = NULL, *mp4 = NULL;
     for (int k = 1; k + 1 < argc; k += 2) {
         if (strcmp(argv[k], "--chapter") == 0) chapter = atoi(argv[k + 1]);
+        else if (strcmp(argv[k], "--from") == 0) from = (float)atof(argv[k + 1]);
+        else if (strcmp(argv[k], "--to") == 0) to = (float)atof(argv[k + 1]);
         else if (strcmp(argv[k], "--frames") == 0) dir = argv[k + 1];
         else if (strcmp(argv[k], "--every") == 0) every = atoi(argv[k + 1]);
         else if (strcmp(argv[k], "--export") == 0) mp4 = argv[k + 1];
+    }
+    if (chapter == 7) { // the 3D section: its own scene (see chapter7_build)
+        chapter7_build();
+        printf("chapter 7: %.2f s, frames 0..%lld\n", an_scene_time(S3), (long long)an_scene_length(S3));
+        int rc7 = 0;
+        if (dir) {
+            const int64_t first = from >= 0 ? (int64_t)llroundf(from * FPS) : 0;
+            const int64_t last = to >= 0 ? (int64_t)llroundf(to * FPS) : an_scene_length(S3);
+            const int64_t n = an_scene_save_frames(S3, &(an_frames_desc){ .dir = dir, .every = every, .first = first,
+                                                                          .last = last, .prefix = "ch7" });
+            if (n >= 0) printf("wrote %lld PNG frames (%lld..%lld, every %d) to %s\n", (long long)n, (long long)first,
+                               (long long)last, every, dir);
+            rc7 = n >= 0 ? 0 : 1;
+        }
+        if (mp4 && rc7 == 0) rc7 = an_scene_export(S3, &(an_export_desc){ .path = mp4 }) > 0 ? 0 : 1;
+        if (!dir && !mp4) an_scene_preview(S3);
+        an_scene_destroy(S3);
+        return rc7;
     }
     S = an_scene_create(&(an_scene_desc){ .width = 1920, .height = 1080, .fps = FPS, .seed = 12,
                                           .style = { .grain_mode = AN_GRAIN_STATIC } }); // shadows only where asked (the title):
