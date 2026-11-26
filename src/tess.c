@@ -3,6 +3,7 @@
 #include "text_internal.h"
 #include "timeline_internal.h"
 #include "plane_internal.h"
+#include "space_internal.h"
 #include "rng_internal.h"
 
 #include <math.h>
@@ -1165,6 +1166,90 @@ static bool emit_plane_child(ani_mesh *m, const an_scene *s, an_obj *c, ani_affi
     return !c->first_child || visit_children(m, s, c, tipf, t, chaos, rest, at);
 }
 
+// The space's key part (docs/space.md, "Cache key"): the composed map at the frame
+// (camera rows times M, and the offset), the distance, the unit, ortho and the clip box.
+typedef struct space_key {
+    float C[9], o[3], D, unit, lo[2], hi[2];
+    int ortho;
+} space_key;
+
+static space_key space_key_of(const ani_view *v, an_vec2 lo, an_vec2 hi) {
+    space_key k = { .D = (float)v->D, .unit = (float)v->unit, .lo = { lo.x, lo.y }, .hi = { hi.x, hi.y }, .ortho = v->ortho };
+    for (int i = 0; i < 9; i++) k.C[i] = (float)v->C[i];
+    for (int i = 0; i < 3; i++) k.o[i] = (float)v->o[i];
+    return k;
+}
+
+// A space's grid, line, vector or path at `at` (docs/space.md): mapped, projected
+// and cut at the near plane, then stroked as on the plane.
+static bool emit_space_child(ani_mesh *m, const an_scene *s, an_obj *c, ani_affine pw, int target, float chaos,
+                             float rest, ani_time at, const ani_view *v, an_vec2 clo, an_vec2 chi) {
+    const float opacity = (float)ani_sample(ani_obj_prop(c, AN_PROP_OPACITY), at).v[0];
+    emit_style st = sample_style(s, c, chaos, at);
+    int t = target;
+    if (m->force_isolate || opacity < 1.0f || (st.stroke.a < 1.0f && target == ANI_TARGET_MAIN)) {
+        t = layer_new(m, target, opacity, c);
+        if (t < 0) return false;
+    }
+    const float sc = sqrtf(fabsf(pw.a * pw.d - pw.b * pw.c));
+    const float g = (st.stroke_width * 0.5f + s->style.boil + 2.0f) / (sc > 0.0f ? sc : 1.0f);
+    const an_vec2 lo = { clo.x - g, clo.y - g }, hi = { chi.x + g, chi.y + g };
+    struct { space_key view; int axis, k; an_vec2 a, b; } key = { space_key_of(v, lo, hi), 0, 0, { 0, 0 }, { 0, 0 } };
+    if (c->kind == AN_KIND_SPACE_GRID) {
+        ani_grid_seg seg[2 * 401];
+        const int n = ani_space_grid(c, v, lo, hi, seg, 2 * 401);
+        for (int i = 0; i < n; i++) {
+            key.axis = seg[i].axis;
+            key.k = seg[i].k;
+            key.a = seg[i].a;
+            key.b = seg[i].b;
+            const uint64_t rk = ani_rng_part_key(c->rng_key, seg[i].axis ? "grid y" : "grid x",
+                                                 (uint64_t)((int64_t)seg[i].k + 0x80000000LL));
+            if (!emit_plane_seg(m, s, c, rk, pw, t, &st, seg[i].a, seg[i].b, &key, sizeof key)) return false;
+        }
+        return true;
+    }
+    if (c->kind == AN_KIND_SPACE_LINE) {
+        if (!ani_space_line_seg(c, v, lo, hi, &key.a, &key.b)) return true;
+        return emit_plane_seg(m, s, c, c->rng_key, pw, t, &st, key.a, key.b, &key, sizeof key);
+    }
+    if (c->kind == AN_KIND_SPACE_PATH) {
+        const int cap = c->u.smark.npts * 2 + 2;
+        an_vec2 *pts = ani_arena_alloc(&m->frame_arena, sizeof(an_vec2) * (size_t)cap, alignof(an_vec2));
+        unsigned char *starts = ani_arena_alloc(&m->frame_arena, (size_t)cap, 1);
+        if (!pts || !starts) return false;
+        bool closed;
+        const int n = ani_space_path_px(c, v, pts, starts, cap, &closed);
+        if (n < 2) return true;
+        ani_path_builder pb;
+        ani_pb_init(&pb);
+        bool ok = true;
+        for (int i = 0; i < n && ok; i++) ok = starts[i] ? ani_pb_move(&pb, pts[i]) : ani_pb_line(&pb, pts[i]);
+        if (ok && closed) ani_pb_close(&pb);
+        ani_path *path = ok ? ani_pb_finish(&pb, &m->frame_arena) : NULL;
+        ani_pb_free(&pb);
+        if (!path) return false;
+        an_obj tmp = *c;
+        tmp.kind = AN_KIND_STROKE;
+        tmp.path = path;
+        tmp.has_stroke = true;
+        return emit_memo(m, s, &tmp, pw, &st, t, &key, sizeof key);
+    }
+    // a vector: the shaft to the head's base, then the head on the tip frame
+    an_vec2 tail, tip, dir;
+    float hs;
+    bool has_tip;
+    if (!ani_space_vector_geom(c, v, at, &tail, &tip, &dir, &hs, &has_tip)) return true;
+    const an_vec2 end = { tip.x - dir.x * 10.0f * hs, tip.y - dir.y * 10.0f * hs };
+    key.a = tip;
+    key.b = dir;
+    const float len = sqrtf((end.x - tail.x) * (end.x - tail.x) + (end.y - tail.y) * (end.y - tail.y));
+    if (len > 0.0f && !emit_plane_seg(m, s, c, c->rng_key, pw, t, &st, tail, end, &key, sizeof key)) return false;
+    if (!has_tip) return true;
+    const ani_affine tipf = ani_affine_mul(pw, (ani_affine){ dir.x * hs, dir.y * hs, -dir.y * hs, dir.x * hs, tip.x, tip.y });
+    return !c->first_child || visit_children(m, s, c, tipf, t, chaos, rest, at);
+}
+
 // pchaos: effective chaos of the parent (scene dial x multipliers down the tree)
 // prest: the parent's area scale on screen without verbs (camera zoom x scales):
 // the text size factor's "rest" scale (docs/camera.md, (d))
@@ -1188,11 +1273,13 @@ static bool visit_children(ani_mesh *m, const an_scene *s, const an_obj *parent,
     const int gbase = m->glyph_count;
     // a plane's children: its matrix at this frame, and the frame as a clip box in
     // its own px (docs/plane.md)
-    const bool in_plane = parent->kind == AN_KIND_PLANE;
+    const bool in_plane = parent->kind == AN_KIND_PLANE, in_space = parent->kind == AN_KIND_SPACE;
     ani_map pmap = { 0 };
+    ani_view sview = { 0 };
     an_vec2 clo = { 0, 0 }, chi = { 0, 0 };
-    if (in_plane) {
-        pmap = ani_plane_map_at(parent, at);
+    if (in_plane) pmap = ani_plane_map_at(parent, at);
+    if (in_space) sview = ani_space_view_at(parent, at);
+    if (in_plane || in_space) {
         const ani_affine inv = affine_inverse(pw);
         const an_vec2 q[4] = { { -m->cam_dx, -m->cam_dy }, { m->frame_w - m->cam_dx, -m->cam_dy },
                                { m->frame_w - m->cam_dx, m->frame_h - m->cam_dy }, { -m->cam_dx, m->frame_h - m->cam_dy } };
@@ -1216,8 +1303,15 @@ static bool visit_children(ani_mesh *m, const an_scene *s, const an_obj *parent,
         const an_vec2 vscale = { (float)vs.v[0], (float)vs.v[1] };
         bool verb = !(vscale.x == 1.0f && vscale.y == 1.0f && vr.v[0] == 0.0);
         an_vec2 lpos = { (float)pos.v[0], (float)pos.v[1] };
-        const bool mapped = in_plane && ani_plane_mapped_kind(c);
+        const bool mapped = (in_plane && ani_plane_mapped_kind(c)) || (in_space && ani_space_mapped_kind(c));
         if (in_plane && !mapped) lpos = ani_map_point(&pmap, lpos); // anchored: pos -> M pos, shape upright
+        if (in_space && !mapped) { // anchored: its 3D point projected, shape upright; hidden behind the near plane
+            double p3[3];
+            ani_space_pos3(c, at, p3);
+            const ani_cam3 cp = ani_view_cam(&sview, p3);
+            if (!ani_view_visible(&sview, cp)) continue;
+            lpos = ani_view_px(&sview, cp);
+        }
         ani_affine local = mapped ? (ani_affine){ 1, 0, 0, 1, 0, 0 } : ani_local(lpos, scale, (float)rot.v[0]);
         if (mapped) verb = false;
         if (verb) {
@@ -1283,7 +1377,7 @@ static bool visit_children(ani_mesh *m, const an_scene *s, const an_obj *parent,
                               c->kind != AN_KIND_ARRAY && c->kind != AN_KIND_CALLOUT && c->kind != AN_KIND_NODE &&
                               c->kind != AN_KIND_AXES && c->kind != AN_KIND_EDGE && c->kind != AN_KIND_GRAPH &&
                               c->kind != AN_KIND_TEXT_VERSION && c->kind != AN_KIND_PLANE &&
-                              !ani_plane_mapped_kind(c);
+                              c->kind != AN_KIND_SPACE && !ani_plane_mapped_kind(c) && !ani_space_mapped_kind(c);
         if (drawable) st = sample_style(s, c, chaos, at);
         // Isolate when the node fades as a unit, or (outside any layer) when a
         // translucent paint needs stencil coverage. docs/layers.md
@@ -1300,7 +1394,9 @@ static bool visit_children(ani_mesh *m, const an_scene *s, const an_obj *parent,
             if (t < 0) return false;
         }
         if (mapped) {
-            if (!emit_plane_child(m, s, c, pw, t, chaos, rest, at, &pmap, clo, chi)) return false;
+            if (in_space ? !emit_space_child(m, s, c, pw, t, chaos, rest, at, &sview, clo, chi)
+                         : !emit_plane_child(m, s, c, pw, t, chaos, rest, at, &pmap, clo, chi))
+                return false;
             continue;
         }
         if (c->kind == AN_KIND_EDGE) {

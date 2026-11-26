@@ -156,6 +156,11 @@ typedef enum an_kind {
     AN_KIND_PLANE_GRID,   /* its grid (internal: lines generated per frame) */
     AN_KIND_PLANE_LINE,   /* an infinite line in the plane (an_plane_line) */
     AN_KIND_PLANE_VECTOR, /* an arrow from the plane's origin (an_plane_vector) */
+    AN_KIND_SPACE,        /* a 3D space with an orbit camera (an_space): a group */
+    AN_KIND_SPACE_GRID,   /* its floor grid (internal: lines generated per frame) */
+    AN_KIND_SPACE_LINE,   /* an infinite 3D line (an_space_line) */
+    AN_KIND_SPACE_VECTOR, /* a 3D arrow from the space's origin (an_space_vector) */
+    AN_KIND_SPACE_PATH,   /* a 3D polyline (an_space_path) */
 } an_kind;
 
 typedef struct an_obj an_obj;
@@ -476,6 +481,13 @@ typedef enum an_prop {
     AN_PROP_VERB_PIVOT,      /* local units, step; default the object's center */
     AN_PROP_STATE,      /* named state (an_state): array cells, nodes, edges; step */
     AN_PROP_MATRIX,     /* planes: the 2x2 matrix {a, b, c, d}; default identity; entrywise */
+    AN_PROP_POS_Z,      /* the third coordinate of anything inside a space; default 0 */
+    AN_PROP_M3_ROW0,    /* spaces: the 3x3 matrix's rows (an_space_matrix_to); entrywise */
+    AN_PROP_M3_ROW1,
+    AN_PROP_M3_ROW2,
+    AN_PROP_SPACE_ORBIT,    /* spaces: {yaw, tilt}, radians (an_space_orbit_to) */
+    AN_PROP_SPACE_DISTANCE, /* spaces: the camera's distance; interpolated in log space */
+    AN_PROP_SPACE_TARGET,   /* spaces: the point the camera looks at {x, y, z} */
     AN_PROP_COUNT
 } an_prop;
 
@@ -518,7 +530,8 @@ typedef struct an_verb_opts {
  * and an_array_swap). */
 typedef enum an_verb_kind { AN_VERB_NONE = 0, AN_VERB_SLAP, AN_VERB_POP, AN_VERB_SQUASH, AN_VERB_SWAP,
                             AN_VERB_CODE_GOTO, AN_VERB_CELL_STATE, AN_VERB_NODE_STATE, AN_VERB_EDGE_STATE,
-                            AN_VERB_PATH, AN_VERB_MOVES, AN_VERB_TEXT_SET } an_verb_kind;
+                            AN_VERB_PATH, AN_VERB_MOVES, AN_VERB_TEXT_SET, AN_VERB_MATRIX3, AN_VERB_ORBIT,
+                            AN_VERB_MOVE3 } an_verb_kind;
 
 typedef struct an_anim {
     an_obj *obj;
@@ -540,6 +553,7 @@ typedef struct an_anim {
     bool failed;           /* made by a call that failed (an_text_set past its limit):
                               playing it records nothing (see an_anim_ok) */
     float gap;             /* an_highlight_path: seconds between objects */
+    float m3[9];           /* an_space_matrix_to: the 3x3 matrix, row-major */
 } an_anim;
 
 an_anim an_move_to(an_obj *o, an_vec2 to, const an_anim_opts *opts);
@@ -920,6 +934,66 @@ an_obj *an_plane_vector(an_obj *plane, an_vec2 v, const an_arrow_opts *opts);
 an_obj *an_plane_line(an_obj *plane, an_vec2 p, an_vec2 dir, const an_line_opts *opts);
 /* An anchored dot at p (default radius 7). */
 an_obj *an_plane_dot(an_obj *plane, an_vec2 p, const an_circle_opts *opts);
+
+/* ---- the 3D space (docs/space.md) ---------------------------------------- */
+
+/* A space: a group whose content lives in space units (right-handed, z up),
+ * mapped through its 3x3 matrix M and projected by an orbit camera every frame,
+ * before stroking. At the default camera you look straight down on the xy plane
+ * (x right, y up the screen), as on an_plane. Lines, vectors, paths and the grid
+ * are mapped point by point and cut at the near plane; any other child is
+ * anchored: its (pos.x, pos.y, pos_z) projects to a screen point and it's drawn
+ * upright there, at its own size (labels, dots). M interpolates entrywise. */
+typedef struct an_vec3 { float x, y, z; } an_vec3;
+typedef struct an_mat3 { float m[9]; } an_mat3; /* row-major */
+#define AN_MAT3_IDENTITY ((an_mat3){ { 1, 0, 0, 0, 1, 0, 0, 0, 1 } })
+an_mat3 an_mat3_rotation(an_vec3 axis, float radians); /* right-handed, about a unit axis */
+an_mat3 an_mat3_scale(an_vec3 s);
+/* yaw: radians about world z. tilt: radians away from looking straight down (pi/2
+ * looks at the horizon). distance: space units from the target. */
+typedef struct an_orbit { float yaw, tilt, distance; } an_orbit;
+typedef enum an_space_grid { AN_SPACE_GRID_XY = 0, AN_SPACE_GRID_NONE } an_space_grid;
+typedef struct an_space_opts {
+    AN_OBJ_FIELDS          /* pos: where the target appears (default the frame center);
+                              stroke / stroke_width: the grid's ink (default faded ink, 2) */
+    float unit;            /* px per unit at the target's depth; default 100 x height / 1080 */
+    an_space_grid grid;    /* the floor grid; default the xy plane */
+    float grid_step;       /* default 1 */
+    float grid_extent;     /* the grid spans [-e, e]^2; default 12 */
+    float grid_chaos;      /* default 0.3, as the plane */
+    bool axes;             /* the x, y and z axes through the origin */
+    bool ortho;            /* no perspective */
+    an_orbit orbit;        /* the initial camera; distance 0: 10 */
+    an_vec3 target;
+} an_space_opts;
+an_obj *an_space(an_scene *s, const an_space_opts *opts);
+an_anim an_space_matrix_to(an_obj *space, an_mat3 m, const an_anim_opts *opts);
+void an_space_set_matrix(an_obj *space, an_mat3 m);
+an_mat3 an_space_matrix_at_cursor(const an_obj *space);
+/* The camera. Yaw and tilt are linear, distance is log-space; a distance <= 0
+ * keeps the current one. */
+an_anim an_space_orbit_to(an_obj *space, an_orbit o, const an_anim_opts *opts);
+void an_space_set_orbit(an_obj *space, an_orbit o);
+an_orbit an_space_orbit_at_cursor(const an_obj *space);
+an_anim an_space_target_to(an_obj *space, an_vec3 t, const an_anim_opts *opts);
+/* Moves an object inside a space to p (pos and pos_z together, same timing). */
+an_anim an_move3_to(an_obj *o, an_vec3 p, const an_anim_opts *opts);
+void an_obj_set_pos3(an_obj *o, an_vec3 p);
+/* A space point to scene space at the cursor (a point behind the near plane is
+ * projected as if at it, so the result is always finite). */
+an_vec2 an_space_point_at_cursor(const an_obj *space, an_vec3 p);
+/* Its depth in front of the camera, in space units. */
+float an_space_depth_at_cursor(const an_obj *space, an_vec3 p);
+/* An arrow from the origin to M v. v is (pos.x, pos.y, pos_z), scaled by the
+ * object's scale (z by the mean of x and y), so an_move3_to and a scale pop
+ * animate it. Rotation is ignored inside a space. Filled head, facing the camera. */
+an_obj *an_space_vector(an_obj *space, an_vec3 v, const an_arrow_opts *opts);
+/* The infinite line through p along dir. A dot at p if M crushes dir. */
+an_obj *an_space_line(an_obj *space, an_vec3 p, an_vec3 dir, const an_line_opts *opts);
+/* An anchored dot at p (default radius 7). */
+an_obj *an_space_dot(an_obj *space, an_vec3 p, const an_circle_opts *opts);
+/* A polyline through n points (copied); closed joins the last to the first. */
+an_obj *an_space_path(an_obj *space, const an_vec3 *pts, int n, bool closed, const an_line_opts *opts);
 
 /* Start at the cursor and move the cursor to the animation's end. */
 an_handle an_play(an_scene *s, an_anim a);

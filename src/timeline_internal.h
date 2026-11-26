@@ -92,6 +92,7 @@ int64_t ani_graph_record_moves(an_scene *s, const an_anim *a, int64_t start);
 // text.c: an_text_set (docs/api-fixes.md item 2). The version current at `at`
 // (NULL: the text has no versions); whether a version node can be seen at `at`.
 int64_t ani_text_record_set(an_scene *s, const an_anim *a, int64_t start);
+int64_t ani_space_record(an_scene *s, const an_anim *a, int64_t start); // space.c: matrix3, orbit, move3
 an_obj *ani_text_current(const an_obj *text, ani_time at);
 bool ani_text_version_live(const an_obj *version, ani_time at);
 // text.c: an_code_goto's tracks.

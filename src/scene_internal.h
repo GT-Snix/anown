@@ -31,6 +31,7 @@ struct an_obj {
     float stroke_width;
     float draw;         // draw progress 0..1
     float chaos;        // chaos multiplier, default 1
+    float pos_z;        // inside a space: the third coordinate (AN_PROP_POS_Z)
 
     // geometry and stroke style (fixed at creation)
     ani_path *path;     // outline / centerline; NULL for groups and text
@@ -156,6 +157,23 @@ struct an_obj {
             float unit;            // px per plane unit
             float grid_step;
         } plane;
+        // AN_KIND_SPACE (docs/space.md): BASE values of its matrix and camera
+        struct {
+            float m[9];            // BASE matrix, row-major
+            float yaw, tilt, distance;
+            an_vec3 target;
+            float unit;            // px per unit at the target's depth
+            float grid_step, grid_extent;
+            bool ortho;
+        } space;
+        // AN_KIND_SPACE_LINE / _PATH (a vector's v is its pos, pos_z and scale)
+        struct {
+            an_vec3 p, dir;        // line
+            an_vec3 *pts;          // path, in the scene arena
+            int npts;
+            bool closed;
+            an_obj *head;          // vector
+        } smark;
         // AN_KIND_PLANE_LINE / AN_KIND_PLANE_VECTOR (the vector's v is its pos / rotation / scale)
         struct {
             an_vec2 p, dir;

@@ -30,6 +30,13 @@ static const ani_prop_info g_props[AN_PROP_COUNT] = {
     [AN_PROP_VERB_PIVOT] = { 2, ANI_SPACE_STEP, 0.0 },
     [AN_PROP_STATE] = { 1, ANI_SPACE_STEP, 0.0 },
     [AN_PROP_MATRIX] = { 4, ANI_SPACE_LINEAR, 1e-6 },
+    [AN_PROP_POS_Z] = { 1, ANI_SPACE_LINEAR, 1e-6 },
+    [AN_PROP_M3_ROW0] = { 3, ANI_SPACE_LINEAR, 1e-6 },
+    [AN_PROP_M3_ROW1] = { 3, ANI_SPACE_LINEAR, 1e-6 },
+    [AN_PROP_M3_ROW2] = { 3, ANI_SPACE_LINEAR, 1e-6 },
+    [AN_PROP_SPACE_ORBIT] = { 2, ANI_SPACE_LINEAR, 1e-6 },
+    [AN_PROP_SPACE_DISTANCE] = { 1, ANI_SPACE_LOG, 1e-6 },
+    [AN_PROP_SPACE_TARGET] = { 3, ANI_SPACE_LINEAR, 1e-6 },
 };
 
 #define SETTLE_RELATIVE 1e-3 // spring tolerance relative to travel distance
@@ -89,6 +96,22 @@ ani_value ani_base_get(ani_prop_ref ref) {
     case AN_PROP_MATRIX:
         if (o->kind == AN_KIND_PLANE) return (ani_value){ { o->u.plane.m[0], o->u.plane.m[1], o->u.plane.m[2], o->u.plane.m[3] } };
         return (ani_value){ { 1, 0, 0, 1 } };
+    case AN_PROP_POS_Z: return (ani_value){ { o->pos_z } };
+    case AN_PROP_M3_ROW0:
+    case AN_PROP_M3_ROW1:
+    case AN_PROP_M3_ROW2: {
+        const int r = (int)(ref.prop - AN_PROP_M3_ROW0);
+        if (o->kind == AN_KIND_SPACE)
+            return (ani_value){ { o->u.space.m[3 * r], o->u.space.m[3 * r + 1], o->u.space.m[3 * r + 2] } };
+        return (ani_value){ { r == 0, r == 1, r == 2 } };
+    }
+    case AN_PROP_SPACE_ORBIT:
+        if (o->kind == AN_KIND_SPACE) return (ani_value){ { o->u.space.yaw, o->u.space.tilt } };
+        return (ani_value){ { 0 } };
+    case AN_PROP_SPACE_DISTANCE: return (ani_value){ { o->kind == AN_KIND_SPACE ? o->u.space.distance : 10.0 } };
+    case AN_PROP_SPACE_TARGET:
+        if (o->kind == AN_KIND_SPACE) return (ani_value){ { o->u.space.target.x, o->u.space.target.y, o->u.space.target.z } };
+        return (ani_value){ { 0 } };
     default: break; // camera properties aren't the object's
     }
     return (ani_value){ { 0 } };
@@ -122,6 +145,25 @@ static void base_set(ani_prop_ref ref, ani_value v) {
     case AN_PROP_MATRIX:
         if (o->kind == AN_KIND_PLANE)
             for (int k = 0; k < 4; k++) o->u.plane.m[k] = (float)v.v[k];
+        break;
+    case AN_PROP_POS_Z: o->pos_z = (float)v.v[0]; break;
+    case AN_PROP_M3_ROW0:
+    case AN_PROP_M3_ROW1:
+    case AN_PROP_M3_ROW2:
+        if (o->kind == AN_KIND_SPACE)
+            for (int k = 0; k < 3; k++) o->u.space.m[3 * (int)(ref.prop - AN_PROP_M3_ROW0) + k] = (float)v.v[k];
+        break;
+    case AN_PROP_SPACE_ORBIT:
+        if (o->kind == AN_KIND_SPACE) {
+            o->u.space.yaw = (float)v.v[0];
+            o->u.space.tilt = (float)v.v[1];
+        }
+        break;
+    case AN_PROP_SPACE_DISTANCE:
+        if (o->kind == AN_KIND_SPACE) o->u.space.distance = (float)v.v[0];
+        break;
+    case AN_PROP_SPACE_TARGET:
+        if (o->kind == AN_KIND_SPACE) o->u.space.target = (an_vec3){ (float)v.v[0], (float)v.v[1], (float)v.v[2] };
         break;
     default: break;
     }
@@ -772,6 +814,8 @@ int64_t ani_record_anim(an_scene *s, const an_anim *a, int64_t start) {
     if (a->verb == AN_VERB_PATH && a->obj) return ani_graph_record_path(s, a, start);
     if (a->verb == AN_VERB_MOVES && a->obj) return ani_graph_record_moves(s, a, start);
     if (a->verb == AN_VERB_TEXT_SET && a->obj) return ani_text_record_set(s, a, start);
+    if ((a->verb == AN_VERB_MATRIX3 || a->verb == AN_VERB_ORBIT || a->verb == AN_VERB_MOVE3) && a->obj)
+        return ani_space_record(s, a, start);
     if (a->verb != AN_VERB_NONE && a->obj) return record_verb(s, a, start);
     const bool spring = a->opts.ease.kind == AN_EASE_KIND_SPRING;
     int64_t duration = ani_ticks(a->opts.duration);

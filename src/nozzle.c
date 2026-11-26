@@ -3,6 +3,7 @@
 #include "stroke_internal.h"
 #include "timeline_internal.h"
 #include "plane_internal.h"
+#include "space_internal.h"
 #include "rng_internal.h"
 
 #include <math.h>
@@ -16,6 +17,15 @@ ani_affine ani_obj_world_at(an_obj *o, ani_time at) {
         if (ani_plane_mapped_kind(o)) return ani_obj_world_at(o->parent, at); // mapped point by point
         const ani_map m = ani_plane_map_at(o->parent, at);                   // anchored: pos -> M pos
         const an_vec2 q = ani_map_point(&m, (an_vec2){ (float)pos.v[0], (float)pos.v[1] });
+        pos.v[0] = q.x;
+        pos.v[1] = q.y;
+    }
+    if (o->parent->kind == AN_KIND_SPACE) { // docs/space.md
+        if (ani_space_mapped_kind(o)) return ani_obj_world_at(o->parent, at);
+        const ani_view v = ani_space_view_at(o->parent, at); // anchored: its 3D point projected
+        double p3[3];
+        ani_space_pos3(o, at, p3);
+        const an_vec2 q = ani_view_px(&v, ani_view_cam(&v, p3));
         pos.v[0] = q.x;
         pos.v[1] = q.y;
     }
