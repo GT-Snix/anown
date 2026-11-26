@@ -15,7 +15,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { NCH = 7, FPS = 30, RING = 24 };
+enum { NCH = 7, RING = 24 };
+static int FPS = 30; // --fps; every chapter is timed in seconds
 // chapter durations, seconds (retime to the voiceover here)
 static const float DUR[NCH] = { 30, 60, 90, 120, 90, 70, 30 };
 static const bool BUILT[NCH] = { true, true, true, true, true, true, true };
@@ -723,10 +724,19 @@ static an_obj *say3(const char *text, an_vec2 at, an_color c, float size, bool m
                                         .riso = AN_OFF, .shadow = AN_OFF });
 }
 
+// captions sit at fixed screen spots in the bottom-left corner, clear of the globe
+// and the egg (which stay around the middle): line 0 above line 1
+static an_obj *caption3(const char *text, int line, an_color c, float size, bool mono) {
+    return an_text(S3, &(an_text_opts){ .text = text, .pos = { 90, line ? 1030.0f : 975.0f }, .size = size,
+                                        .font = mono ? an_font_mono(S3) : NULL, .align = AN_ALIGN_LEFT,
+                                        .anchor = AN_ANCHOR_MIDDLE, .fill = c, .hidden = true, .riso = AN_OFF,
+                                        .shadow = AN_OFF });
+}
+
 // a label anchored at a 3D point of a space or frame, upright, mono
-static an_obj *label3(an_obj *parent, const char *text, an_vec3 at, an_color c, float size) {
+static an_obj *label3(an_obj *parent, const char *text, an_vec3 at, an_color c, float size, an_align al) {
     an_obj *t = an_text(S3, &(an_text_opts){ .parent = parent, .text = text, .size = size, .font = an_font_mono(S3),
-                                             .align = AN_ALIGN_LEFT, .anchor = AN_ANCHOR_MIDDLE, .fill = c, .hidden = true,
+                                             .align = al, .anchor = AN_ANCHOR_MIDDLE, .fill = c, .hidden = true,
                                              .riso = AN_OFF, .shadow = AN_OFF });
     an_obj_set_pos3(t, at);
     return t;
@@ -788,7 +798,12 @@ static void chapter7_build(void) {
     S3 = an_scene_create(&(an_scene_desc){ .width = 1920, .height = 1080, .fps = FPS, .seed = 7,
                                            .style = { .grain_mode = AN_GRAIN_STATIC } });
     // the space starts straight overhead: the floor grid looks like the plane's
-    an_obj *sp = an_space(S3, &(an_space_opts){ .axes = true, .grid_extent = 7 });
+    an_obj *sp = an_space(S3, &(an_space_opts){ .grid_extent = 7 });
+    // the axes as the space draws them, but ours, so the z axis can leave for the egg
+    an_obj *axes[3];
+    for (int k = 0; k < 3; k++)
+        axes[k] = an_space_line(sp, (an_vec3){ 0, 0, 0 }, (an_vec3){ k == 0, k == 1, k == 2 },
+                                &(an_line_opts){ .z = -5, .stroke_width = 4, .stroke = CHARCOAL, .shadow = AN_OFF });
 
     // "Everything so far was flat." two arrows on the floor, the plane's colors
     an_obj *flat[2] = {
@@ -833,7 +848,7 @@ static void chapter7_build(void) {
     t3(9.6f);
     light_axis(&g1);
     t3(12.4f);
-    an_obj *lam1 = label3(g1.still, "\xCE\xBB = 1", scale3(axis1, 1.6f * 1.75f), ORANGE, 48);
+    an_obj *lam1 = label3(g1.still, "\xCE\xBB = 1", scale3(axis1, 1.6f * 1.75f), ORANGE, 48, AN_ALIGN_LEFT);
     an_play(S3, an_slap(lam1, &(an_verb_opts){ .enter = AN_ON }));
     // "The rotation doesn't turn it and doesn't stretch it either." a radius on the
     // equator turns with the globe; the axis doesn't
@@ -880,13 +895,13 @@ static void chapter7_build(void) {
         an_wait(S3, 0.06f);
     }
     t3(33.9f);
-    an_obj *lam_real = label3(g2.still, "\xCE\xBB = 1: real", scale3(axis2, 1.6f * 1.75f), ORANGE, 44);
+    an_obj *lam_real = label3(g2.still, "\xCE\xBB = 1: real", scale3(axis2, 1.6f * 1.75f), ORANGE, 44, AN_ALIGN_LEFT);
     an_play(S3, an_slap(lam_real, &(an_verb_opts){ .enter = AN_ON }));
     t3(37.6f);
-    an_obj *lam_cx = say3("the other two \xCE\xBB: complex", (an_vec2){ 960, 980 }, CYAN, 54, true);
+    an_obj *lam_cx = caption3("the other two \xCE\xBB: complex", 0, CYAN, 50, true);
     an_play(S3, an_fade_to(lam_cx, 1, &(an_anim_opts){ .duration = 0.4f }));
     t3(41.7f);
-    an_obj *round = say3("round and round", (an_vec2){ 960, 1040 }, CHARCOAL, 40, false);
+    an_obj *round = caption3("round and round", 1, CHARCOAL, 40, false);
     an_play(S3, an_fade_to(round, 1, &(an_anim_opts){ .duration = 0.4f }));
 
     // "Now stretch instead of spin. A sphere becomes an egg, and the egg's three axes are
@@ -895,6 +910,7 @@ static void chapter7_build(void) {
     an_obj *g2_all[14] = { g2.ball, g2.up, g2.down, lam_real, lam_cx, round };
     for (int k = 0; k < 8; k++) g2_all[6 + k] = ring3[k];
     fade3(g2_all, 14, 0, 0.6f);
+    an_play_async(S3, an_fade_to(axes[2], 0, &(an_anim_opts){ .duration = 0.6f })); // no z axis through the egg
     // the egg: a symmetric stretch S = R diag(3, 2, 1) R^T, so its axes R e_i are its
     // eigenvectors: arrows along them stretch and never turn
     t3(43.8f);
@@ -910,7 +926,6 @@ static void chapter7_build(void) {
         const an_vec3 e = mat3_apply(R, (an_vec3){ k == 0, k == 1, k == 2 });
         arms[k] = an_space_vector(egg, e, &(an_arrow_opts){ .stroke = cols[k], .stroke_width = 7, .undrawn = true,
                                                             .riso = AN_OFF, .shadow = AN_OFF });
-        tags[k] = label3(egg, by[k], scale3(e, 1.3f), cols[k], 46);
     }
     an_play(S3, an_fade_to(shell, 1, &(an_anim_opts){ .duration = 0.5f }));
     for (int k = 0; k < 3; k++) an_play(S3, an_draw(arms[k], &(an_anim_opts){ .duration = 0.3f }));
@@ -925,6 +940,24 @@ static void chapter7_build(void) {
                    (double)sqrtf(off.x * off.x + off.y * off.y + off.z * off.z));
         }
     }
+    // the x3 / x2 / x1 labels: beside each stretched arrow, near its tip, offset
+    // perpendicular to it on screen. The camera holds still here (its drift ended at
+    // 43 s), so the offset is a 3D direction across both the arrow and the line of
+    // sight: arrow x view. In the egg's frame that point is S^-1 of it.
+    {
+        const an_orbit ob = an_space_orbit_at_cursor(sp);
+        const an_vec3 view = { -sinf(ob.tilt) * sinf(ob.yaw), sinf(ob.tilt) * cosf(ob.yaw), -cosf(ob.tilt) };
+        const an_mat3 Sinv = mat3_mul(mat3_mul(R, an_mat3_scale((an_vec3){ 1.0f / 3, 1.0f / 2, 1 })), mat3_transpose(R));
+        static const float lam[3] = { 3, 2, 1 };
+        for (int k = 0; k < 3; k++) {
+            const an_vec3 e = mat3_apply(R, (an_vec3){ k == 0, k == 1, k == 2 });
+            an_vec3 n = { e.y * view.z - e.z * view.y, e.z * view.x - e.x * view.z, e.x * view.y - e.y * view.x };
+            const float nl = sqrtf(n.x * n.x + n.y * n.y + n.z * n.z);
+            n = scale3(n, 0.75f / nl);
+            const an_vec3 at = { e.x * lam[k] * 0.8f + n.x, e.y * lam[k] * 0.8f + n.y, e.z * lam[k] * 0.8f + n.z }; // world, egg-centered
+            tags[k] = label3(egg, by[k], mat3_apply(Sinv, at), cols[k], 46, AN_ALIGN_CENTER);
+        }
+    }
     t3(49.3f);
     for (int k = 0; k < 3; k++) {
         an_play_async(S3, an_slap(tags[k], &(an_verb_opts){ .enter = AN_ON }));
@@ -933,9 +966,22 @@ static void chapter7_build(void) {
     t3(51.5f);
     an_play(S3, an_stroke_width_to(arms[0], 12, &(an_anim_opts){ .duration = 0.4f }));
     t3(52.6f);
-    an_obj *big = say3("long axis = biggest \xCE\xBB", (an_vec2){ 960, 990 }, MAGENTA, 54, true);
+    an_obj *big = caption3("long axis = biggest \xCE\xBB", 0, MAGENTA, 50, true);
     an_play(S3, an_slap(big, &(an_verb_opts){ .enter = AN_ON }));
     t3(CH7_LEN);
+}
+
+// The first and last frames of a chapter as PNGs (DIR/chN_first.png, chN_last.png,
+// through the frame dumper), for checking the seams between chapters.
+static int save_seams(an_scene *s, const char *dir, int ch, int64_t first, int64_t last) {
+    const int64_t f[2] = { first, last };
+    for (int k = 0; k < 2; k++) {
+        // one frame: from f[k], stepping past the end (last = 0 would mean the whole timeline)
+        const int64_t n = an_scene_save_frames(s, &(an_frames_desc){ .dir = dir, .first = f[k], .last = f[k] + 1,
+                                                                     .every = 1000000, .prefix = nm("ch%d_%s", ch, k ? "last" : "first") });
+        if (n != 1) return 1;
+    }
+    return 0;
 }
 
 // ---- main -----------------------------------------------------------------------------------
@@ -943,10 +989,12 @@ static void chapter7_build(void) {
 int main(int argc, char **argv) {
     int chapter = -1, every = 30;
     float from = -1, to = -1; // chapter 7: seconds into it (stills around a moment)
-    const char *dir = NULL, *mp4 = NULL;
+    const char *dir = NULL, *mp4 = NULL, *seams = NULL;
     for (int k = 1; k + 1 < argc; k += 2) {
         if (strcmp(argv[k], "--chapter") == 0) chapter = atoi(argv[k + 1]);
         else if (strcmp(argv[k], "--from") == 0) from = (float)atof(argv[k + 1]);
+        else if (strcmp(argv[k], "--fps") == 0) FPS = atoi(argv[k + 1]) > 0 ? atoi(argv[k + 1]) : 30;
+        else if (strcmp(argv[k], "--seams") == 0) seams = argv[k + 1];
         else if (strcmp(argv[k], "--to") == 0) to = (float)atof(argv[k + 1]);
         else if (strcmp(argv[k], "--frames") == 0) dir = argv[k + 1];
         else if (strcmp(argv[k], "--every") == 0) every = atoi(argv[k + 1]);
@@ -965,7 +1013,9 @@ int main(int argc, char **argv) {
                                (long long)last, every, dir);
             rc7 = n >= 0 ? 0 : 1;
         }
+        if (seams && rc7 == 0) rc7 = save_seams(S3, seams, 7, 0, an_scene_length(S3));
         if (mp4 && rc7 == 0) rc7 = an_scene_export(S3, &(an_export_desc){ .path = mp4 }) > 0 ? 0 : 1;
+        printf("chapter 7 range: frames 0..%lld\n", (long long)an_scene_length(S3));
         if (!dir && !mp4) an_scene_preview(S3);
         an_scene_destroy(S3);
         return rc7;
@@ -999,8 +1049,15 @@ int main(int argc, char **argv) {
                            (long long)last, every, dir);
         rc = n >= 0 ? 0 : 1;
     }
-    if (mp4 && rc == 0) {
-        const int64_t n = an_scene_export(S, &(an_export_desc){ .path = mp4 });
+    if (chapter >= 0)
+        printf("chapter %d range: frames %lld..%lld\n", chapter, (long long)llround(ch_start[chapter] * FPS),
+               (long long)llround(ch_end[chapter] * FPS));
+    if (seams && rc == 0 && chapter >= 0)
+        rc = save_seams(S, seams, chapter, llround(ch_start[chapter] * FPS), llround(ch_end[chapter] * FPS));
+    if (mp4 && rc == 0) { // one chapter: its frames first..last, inclusive (as --frames)
+        const int64_t first = chapter >= 0 ? (int64_t)llround(ch_start[chapter] * FPS) : 0;
+        const int64_t last = chapter >= 0 ? (int64_t)llround(ch_end[chapter] * FPS) : an_scene_length(S);
+        const int64_t n = an_scene_export(S, &(an_export_desc){ .path = mp4, .first = first, .frames = last - first + 1 });
         rc = n > 0 ? 0 : 1;
     }
     if (!dir && !mp4) an_scene_preview(S);

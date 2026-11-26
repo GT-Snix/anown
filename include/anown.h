@@ -1112,14 +1112,15 @@ typedef enum an_export_quality {
 
 typedef struct an_export_desc {
     const char *path; /* default "out.mp4" */
-    int64_t frames;   /* default: an_scene_length(s) + 1, the whole timeline */
+    int64_t frames;   /* default: the rest of the timeline, first..L inclusive */
+    int64_t first;    /* the first frame to encode; default 0 */
     int crf;          /* x264 quality; 0 = the quality's default (above) */
     an_export_quality quality;
 } an_export_desc;
 
-/* Render frames 0..frames-1 offscreen and encode H.264 mp4 through ffmpeg
- * (must be on PATH). By default that's 0..L inclusive, so the last frame shows
- * the final state. Returns the number of frames written, or -1 on failure
+/* Render frames first..first+frames-1 offscreen and encode H.264 mp4 through
+ * ffmpeg (must be on PATH). By default that's 0..L inclusive, so the last frame
+ * shows the final state. Returns the number of frames written, or -1 on failure
  * (with a message on stderr). */
 int64_t an_scene_export(an_scene *s, const an_export_desc *desc);
 

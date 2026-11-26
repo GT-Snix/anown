@@ -34,7 +34,8 @@ int64_t an_scene_export(an_scene *s, const an_export_desc *desc) {
     if (!s) return -1;
     const an_export_desc d = desc ? *desc : (an_export_desc){ 0 };
     const char *path = d.path ? d.path : "out.mp4";
-    const int64_t frames = d.frames > 0 ? d.frames : an_scene_length(s) + 1; // 0..L inclusive
+    const int64_t first = d.first > 0 ? d.first : 0;
+    const int64_t frames = d.frames > 0 ? d.frames : an_scene_length(s) + 1 - first; // first..L inclusive
     const bool master = d.quality == AN_EXPORT_MASTER;
     const int crf = d.crf > 0 ? d.crf : master ? AN_EXPORT_MASTER_CRF : AN_EXPORT_SHARE_CRF;
 
@@ -92,7 +93,7 @@ int64_t an_scene_export(an_scene *s, const an_export_desc *desc) {
     }
 
     const size_t frame_bytes = ani_offscreen_frame_bytes(&off);
-    for (int64_t frame = 0; ok && frame < frames; frame++) {
+    for (int64_t frame = first; ok && frame < first + frames; frame++) {
         pool = ani_pool_push();
         ok = ani_renderer_prepare(&r, s, frame, s->width, s->height);
         ani_offscreen_begin(&off, s->background);
