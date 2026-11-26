@@ -28,6 +28,10 @@ typedef struct ani_grid_seg { int axis, k; an_vec2 a, b; } ani_grid_seg;
 // Grid lines visible in the clip box [lo, hi] (plane-local px), mapped and clipped.
 int ani_plane_grid(const an_obj *grid, const ani_map *m, an_vec2 lo, an_vec2 hi, ani_grid_seg *out, int cap);
 bool ani_plane_line_seg(const an_obj *line, const ani_map *m, an_vec2 lo, an_vec2 hi, an_vec2 *a, an_vec2 *b);
+// shared with the space (docs/space.md): Liang-Barsky, and the infinite 2D line through
+// P along D clipped to [lo, hi] (a dot at P if |D| <= 1e-6 unit)
+bool ani_clip_seg(an_vec2 *a, an_vec2 *b, an_vec2 lo, an_vec2 hi);
+bool ani_line2_seg(an_vec2 P, an_vec2 D, float unit, an_vec2 lo, an_vec2 hi, an_vec2 *a, an_vec2 *b);
 void ani_plane_vector_geom(an_obj *vec, const ani_map *m, ani_time at, an_vec2 *tip, an_vec2 *dir, float *head);
 
 #endif

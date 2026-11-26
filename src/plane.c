@@ -47,7 +47,7 @@ bool ani_plane_mapped_kind(const an_obj *o) {
 
 // ---- clipping (Liang-Barsky) ---------------------------------------------------------------
 
-static bool clip(an_vec2 *a, an_vec2 *b, an_vec2 lo, an_vec2 hi) {
+bool ani_clip_seg(an_vec2 *a, an_vec2 *b, an_vec2 lo, an_vec2 hi) {
     const float dx = b->x - a->x, dy = b->y - a->y;
     const float p[4] = { -dx, dx, -dy, dy }, q[4] = { a->x - lo.x, hi.x - a->x, a->y - lo.y, hi.y - a->y };
     float t0 = 0.0f, t1 = 1.0f;
@@ -110,7 +110,7 @@ int ani_plane_grid(const an_obj *grid, const ani_map *m, an_vec2 lo, an_vec2 hi,
             const float v = (float)k * step;
             an_vec2 a = ani_map_point(m, axis ? (an_vec2){ x0, v } : (an_vec2){ v, y0 });
             an_vec2 b = ani_map_point(m, axis ? (an_vec2){ x1, v } : (an_vec2){ v, y1 });
-            if (!clip(&a, &b, lo, hi)) continue;
+            if (!ani_clip_seg(&a, &b, lo, hi)) continue;
             out[n++] = (ani_grid_seg){ axis, k, a, b };
         }
     }
@@ -119,8 +119,12 @@ int ani_plane_grid(const an_obj *grid, const ani_map *m, an_vec2 lo, an_vec2 hi,
 
 bool ani_plane_line_seg(const an_obj *line, const ani_map *m, an_vec2 lo, an_vec2 hi, an_vec2 *a, an_vec2 *b) {
     const an_vec2 P = ani_map_point(m, line->u.pmark.p), D = ani_map_tangent(m, line->u.pmark.p, line->u.pmark.dir);
+    return ani_line2_seg(P, D, m->unit, lo, hi, a, b);
+}
+
+bool ani_line2_seg(an_vec2 P, an_vec2 D, float unit, an_vec2 lo, an_vec2 hi, an_vec2 *a, an_vec2 *b) {
     const float dl = sqrtf(D.x * D.x + D.y * D.y);
-    if (!(dl > 1e-6f * m->unit)) { // crushed: a dot at M p
+    if (!(dl > 1e-6f * unit)) { // crushed: a dot at P
         *a = P;
         *b = (an_vec2){ P.x + 0.01f, P.y };
         return P.x >= lo.x && P.x <= hi.x && P.y >= lo.y && P.y <= hi.y;
@@ -128,7 +132,7 @@ bool ani_plane_line_seg(const an_obj *line, const ani_map *m, an_vec2 lo, an_vec
     const float L = hypotf(hi.x - lo.x, hi.y - lo.y) + hypotf(P.x - (lo.x + hi.x) * 0.5f, P.y - (lo.y + hi.y) * 0.5f);
     *a = (an_vec2){ P.x - D.x / dl * L, P.y - D.y / dl * L };
     *b = (an_vec2){ P.x + D.x / dl * L, P.y + D.y / dl * L };
-    return clip(a, b, lo, hi);
+    return ani_clip_seg(a, b, lo, hi);
 }
 
 // v: the vector's pos turned clockwise (on screen; y is up in the plane) by its
