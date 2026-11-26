@@ -1036,3 +1036,35 @@ docs/graphs.md is the spec.
 
 **Not built:** chapters 4 and 5 (ship order). Until then, chapter 6 follows
 chapter 3.
+
+## an_space milestone A; examples/13_space (2026-11-26)
+
+docs/space.md (approved with changes). A 3D space: a 3x3 root matrix
+(entrywise), an orbit camera (yaw, tilt, log-space distance, target), pos_z and
+an_move3_to, and vectors, lines, dots, paths, the floor grid and the axes. They're
+projected per frame in double and stroked through the plane's path, with
+near-plane cutting in camera space.
+
+**What works:**
+- The plane gate: a space at the default camera renders the same bytes as
+  an_plane (vectors, a line, a dot, a label); the grids agree within 1e-3 px.
+- Projection, near-plane cuts (also under a 30 px shake), orbit sweeps and
+  seek order with the cache: tests/test_space.c, values by hand.
+- The cache key: dropping the path key on purpose fails seek order (41 of 102
+  frames).
+- examples/13_space: 20.5 s; the flat grid tilts into 3D, orbits a full turn,
+  takes [[3,1,0],[0,2,0],[0,0,1]] and dollies in. 616 frames dump as PNGs in
+  35 s (8 threads, encoding included).
+
+**As implemented:**
+- Paths aren't subdivided on screen. Their points are a polyline already, and
+  a straight 3D segment stays straight under perspective. Subdividing belongs to
+  the spheres' analytic curves (milestone B).
+- Infinite lines parallel to the picture take the plane's 2D line code (that's
+  what makes the gate exact). Others are cut and projected from p +- L dir.
+- Anchored children behind the near plane aren't drawn.
+
+**Not done:**
+- Milestone B: frames, spin, spheres, culling.
+- The 12 ms bench (scripts/bench.sh) wasn't run for a space scene.
+- Unchanged: reference frames and 12_eigen frames are identical; all 24 tests pass.
