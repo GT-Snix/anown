@@ -129,13 +129,28 @@ static an_scene *build_code(void) {
 // scenario 8: a 3D space (docs/space.md): the floor grid, the axes and 24 vectors
 // (a ring of 12 on the floor, 12 rising), the camera orbiting a full turn and
 // dollying the whole time, so no space emission replays from the cache
-static an_scene *build_space(void) {
+// scenario 9: as 8, plus the examples/13_space globe (filled, far wire at 0.22,
+// spinning in a frame) and egg (a sphere whose frame stretches by R diag(3, 2, 1))
+static an_scene *build_space(bool spheres) {
     an_scene *s = an_scene_create(&(an_scene_desc){ .fps = 60, .seed = 7 });
     an_obj *sp = an_space(s, &(an_space_opts){ .axes = true, .orbit = { 0, 0.9f, 12 } });
     for (int k = 0; k < 24; k++) {
         const float a = (float)k * 0.5235988f, r = k < 12 ? 3.0f : 2.0f;
         an_space_vector(sp, (an_vec3){ r * cosf(a), r * sinf(a), k < 12 ? 0.0f : 1.5f + 0.1f * (float)(k - 12) },
                         &(an_arrow_opts){ .stroke = k % 2 ? AN_HEX(0xE6007E) : AN_HEX(0x00B4D8), .stroke_width = 6 });
+    }
+    if (spheres) {
+        an_obj *globe = an_space_frame(sp, &(an_frame_opts){ .origin = { -3.2f, 0, 1.7f }, .spin_axis = { 0.397f, 0, 0.918f } });
+        an_space_sphere(globe, &(an_sphere_opts){ .radius = 1.5f, .fill = AN_HEX(0xF3EDE2), .back = 0.22f });
+        an_obj *ax = an_space_frame(sp, &(an_frame_opts){ .origin = { -3.2f, 0, 1.7f } });
+        an_space_vector(ax, (an_vec3){ 0.99f, 0, 2.3f }, &(an_arrow_opts){ .stroke = AN_HEX(0xFF6A00), .stroke_width = 7 });
+        an_obj *egg = an_space_frame(sp, &(an_frame_opts){ .origin = { 3.0f, 0.3f, 1.5f } });
+        an_space_sphere(egg, &(an_sphere_opts){ .radius = 0.8f, .meridians = 10, .parallels = 5, .back = 0.22f });
+        const an_mat3 R = an_mat3_rotation((an_vec3){ 0.3f, 0.2f, 1 }, 0.6f);
+        an_mat3 F;
+        for (int i = 0; i < 9; i++) F.m[i] = R.m[i] * (float)(3 - i % 3);
+        an_play_async(s, an_frame_spin_to(globe, 6 * 3.14159265f, &(an_anim_opts){ .duration = 6, .ease = AN_EASE_LINEAR }));
+        an_play_async(s, an_space_matrix_to(egg, F, &(an_anim_opts){ .duration = 3 }));
     }
     an_play_async(s, an_space_orbit_to(sp, (an_orbit){ 6.2831853f, 1.2f, 8 }, &(an_anim_opts){ .duration = 6, .ease = AN_EASE_LINEAR }));
     an_wait(s, 6.0f);
@@ -144,7 +159,7 @@ static an_scene *build_space(void) {
 
 static an_scene *build(int scenario) {
     if (scenario == 5) return build_code();
-    if (scenario == 8) return build_space();
+    if (scenario == 8 || scenario == 9) return build_space(scenario == 9);
     // default style: chaos 1, paper grain + vignette, riso on everything with ink;
     // scenario 3 also turns hard shadows on for every object
     an_scene *s = an_scene_create(&(an_scene_desc){ .fps = 60, .seed = 7, .style = { .shadow = scenario == 3,
@@ -313,10 +328,11 @@ int main(int argc, char **argv) {
             worst_frame = f;
         }
     }
-    static const char *names[9] = { "opaque (direct path)", "50 shapes fading together",
+    static const char *names[10] = { "opaque (direct path)", "50 shapes fading together",
                                     "everything in one fading group", "opaque, shadows on",
                                     "opaque, paper grain and vignette off", "30 x 60 code block",
-                                    "all drawn, 10% of objects moving", "as 6, with the camera panning" , "3D space: grid, axes, 24 vectors, orbiting"};
+                                    "all drawn, 10% of objects moving", "as 6, with the camera panning" , "3D space: grid, axes, 24 vectors, orbiting",
+                                    "as 8, with the globe and the egg"};
     if (!machine_quiet("after the run")) return 3;
     printf("200 strokes + 50 filled shapes, scenario %d: %s, %lld frames, up to %d triangles, up to %d layers/frame\n",
            scenario, names[scenario], (long long)(L + 1), max_tris, max_layers);
